@@ -1,11 +1,11 @@
 # PhotX Project Progress
 
-## Current Milestone: Phase 0 — Repository Bootstrap & Safety Hardening (Pending Owner Review)
+## Current Milestone: Phase 1 Milestone 1 — `:core:domain` & `:feature:auth` Complete (TDLib Paused on Sigstore Auth)
 
 | Phase | Target Version | Status | Summary |
 |---|---|---|---|
-| **Phase 0 — Repository Bootstrap** | `v0.1.0-bootstrap` | **Complete (Pending Review)** | Multi-module foundation (`:app`, `:core:common`, `:core:model`), `build-logic`, quality gates, CI, ADRs, `SyncStateTransitionValidator`, docs |
-| **Phase 1 — Foundation & TDLib Auth** | `v0.1.0` | Not Started | `:core:domain`, `:core:telegram`, Hilt `2.60.1` + KSP `2.3.14` verification, TDLib AAR ABI validation, Auth UI, doc-format alignment |
+| **Phase 0 — Repository Bootstrap** | `v0.1.0-bootstrap` | **Complete (`ADR-001`, `ADR-002` Accepted)** | `:app`, `:core:common`, `:core:model`, `build-logic`, `SyncStateTransitionValidator`, CI, docs |
+| **Phase 1 — Foundation & TDLib Auth** | `v0.1.0` | **In Progress** | Convention plugins (`library`, `compose`, `hilt`, `feature`), `:core:domain`, `:feature:auth`, and `:app` Hilt/Compose wiring **complete & verified (`25/25` unit tests)**. `:core:telegram` paused pending `gh auth login` + `gh attestation verify` (or Option C). |
 | **Phase 2 — Local Gallery & Paging 3** | `v0.2.0` | Not Started | MediaStore scanner, Room + Paging 3, WebP thumbnails, Compose timeline grid, viewer |
 | **Phase 3 — Sequential Auto-Backup** | `v0.3.0` | Not Started | SHA-256 deduplication, persistent single-upload WorkManager queue, `#photx` upload + correlation |
 | **Phase 4 — Remote Thumbnails & Recovery** | `v0.4.0` | Not Started | Coil 3 TDLib fetcher, Saved Messages scanner, fresh-install Room index reconstruction |
@@ -14,17 +14,12 @@
 
 ---
 
-## Verified Bootstrap Artifacts (Implemented)
-- `SPEC.md` saved with `PhotX` / `#photx` identity (`0` `TelePhotos` occurrences verified).
-- Gradle `9.6.1` wrapper, Version Catalog (`gradle/libs.versions.toml`), `build-logic/convention` (`photx.android.application`, `photx.jvm.library`, `photx.quality`).
-- `:core:model` (`SyncState`, `SyncStateTransitionValidator` + `SyncStateTransitionResult`, `MediaType`, `PhotxMetadata`) kept dependency-free.
-- `:core:common` (`DispatcherProvider`, `DefaultDispatcherProvider`, `Outcome`, `AppError`).
-- `:app` (`PhotxApplication`, manifest, `AppSanityTest`).
-- Verified toolchain compatibility: AGP `9.5.2` + Kotlin `2.4.10` (`2.2.10 -> 2.4.10` confirmed via `buildEnvironment`) + Spotless `8.12.0` (`ktlint 1.8.0`) + Detekt `2.0.0-alpha.6` (`dev.detekt`) on Windows JBR `25.0.4`.
-- All local verification tasks passed on native Windows (`spotlessCheck`, `detekt`, `15/15` unit tests including the full 36-case `SyncState` transition matrix, `:app:lintDebug`, `:app:assembleDebug`).
+## Completed & Verified Work (`chore/phase1-prep`)
+- **Build & Convention Plugins:** Added `photx.android.library`, `photx.android.compose` (`Compose BOM 2026.11.01`), `photx.android.hilt` (`KSP 2.3.14` + `Hilt 2.60.1`), and `photx.android.feature`.
+- **`:core:domain` (Pure JVM, `explicitApi()`):** `AuthState`, `AuthRepository`, `ObserveAuthStateUseCase`, `InitializeAuthUseCase`, `SubmitPhoneNumberUseCase`, `SubmitAuthCodeUseCase`, `SubmitPasswordUseCase`, `LogOutUseCase`, plus `7` passing unit tests.
+- **`:feature:auth` (Compose Material 3 + Hilt):** `AuthUiState`, `AuthUiEvent`, `AuthViewModel`, `AuthScreen`/`AuthRoute`, `AuthScreenPreviews`, `AuthDomainModule`, plus `3` passing Turbine/Coroutines unit tests.
+- **`:app` Wiring:** `@HiltAndroidApp` (`PhotxApplication`), `@AndroidEntryPoint` (`MainActivity`), `AppModule` binding `DefaultDispatcherProvider` and explicit `PendingTdlibAuthRepository` stub.
+- **Verification:** `spotlessCheck`, `detekt`, `25/25` unit tests across all 5 modules, `:app:lintDebug`, `:feature:auth:lintDebug`, and `:app:assembleDebug` all **PASSED**.
 
-## Not Yet Implemented (Planned for Phases 1–5)
-- **Transactional Database State Enforcement (Phases 2–3):** `SyncStateTransitionValidator` validates state-machine rules in memory, but does not yet enforce Room atomicity. Room DAOs/repositories must wrap state reads + `SyncStateTransitionValidator.validate()` + updates inside `@Transaction` once `:core:database` and `:core:data` exist.
-- **Free Up Space Deletion Guard (Phase 5):** Checking `SYNCED -> CLOUD_ONLY` alone cannot prove a remote Telegram backup exists; Phase 5 must verify `telegramChatId`, `telegramMessageId`, TDLib send completion, persisted metadata, matching `sha256`, and unchanged local bytes immediately before deletion.
-- **Phase 1 Candidates (Documented only):** `KSP 2.3.14` and `Hilt 2.60.1` remain unapplied until Phase 1 compatibility verification.
-- **ADRs (`ADR-001`, `ADR-002`):** Remain `Proposed` until owner review and acceptance.
+## Genuine Blocker & Next Goal
+- **Option C TDLib Build (`theprincejr/photex-app`):** Authenticated `gh attestation verify` against `codaki-apps/tdlib-android` failed (`HTTP 404` due to `codaki26` → `codaki-apps` repo transfer). `ADR-003` is now **Accepted** with **Option C** (`third_party/tdlib/` + `.github/workflows/tdlib-build.yml`). Once `theprincejr/photex-app` publishes `tdlib-1.8.70-c8828d5` with passing `gh attestation verify`, we will implement `:core:telegram` and replace `PendingTdlibAuthRepository`.

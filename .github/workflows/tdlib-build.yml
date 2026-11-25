@@ -1,0 +1,110 @@
+name: tdlib-build
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: tdlib-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    timeout-minutes: 240
+    strategy:
+      fail-fast: true
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a, x86_64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Free disk space for the NDK and LTO objects
+        run: sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+
+      - name: Build ${{ matrix.abi }}
+        env:
+          ABI: ${{ matrix.abi }}
+        run: |
+          set -euo pipefail
+          source third_party/tdlib/tdlib.lock
+          docker build --platform linux/amd64 --progress=plain --output type=local,dest=out \
+            --file third_party/tdlib/Dockerfile \
+            --build-arg BASE_IMAGE="$BASE_IMAGE" \
+            --build-arg APT_SNAPSHOT="$APT_SNAPSHOT" \
+            --build-arg TDLIB_COMMIT="$TDLIB_COMMIT" \
+            --build-arg ANDROID_NDK_VERSION="$ANDROID_NDK_VERSION" \
+            --build-arg ANDROID_API_LEVEL="$ANDROID_API_LEVEL" \
+            --build-arg ANDROID_STL="$ANDROID_STL" \
+            --build-arg TDLIB_INTERFACE="$TDLIB_INTERFACE" \
+            --build-arg OPENSSL_VERSION="$OPENSSL_VERSION" \
+            --build-arg OPENSSL_URL="$OPENSSL_URL" \
+            --build-arg OPENSSL_SHA256="$OPENSSL_SHA256" \
+            --build-arg OPENSSL_DIR="$OPENSSL_DIR" \
+            --build-arg ABI="$ABI" \
+            --build-arg BUILD_JOBS=4 \
+            third_party/tdlib
+          cat "out/gates-$ABI.txt"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tdlib-${{ matrix.abi }}
+          path: out/
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Refuse an existing tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          source third_party/tdlib/tdlib.lock
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$RELEASE_TAG" > /dev/null 2>&1; then
+            echo "::error::tag $RELEASE_TAG already exists; bump RELEASE_TAG in third_party/tdlib/tdlib.lock (-rN)"
+            exit 1
+          fi
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: tdlib-*
+          path: parts
+
+      - name: Assemble the release (pinned assembly image)
+        run: |
+          set -euo pipefail
+          source third_party/tdlib/tdlib.lock
+          docker run --rm --name photx-tdlib-assemble -v "$PWD:/work" -w /work "$ASSEMBLE_IMAGE" \
+            bash third_party/tdlib/scripts/assemble-release.sh parts dist
+
+      - uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/*.zip
+
+      - name: Publish the release (fails if the tag already exists)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          source third_party/tdlib/tdlib.lock
+          gh release create "$RELEASE_TAG" dist/*.zip dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --title "$RELEASE_TAG" --notes-file dist/NOTES.md
