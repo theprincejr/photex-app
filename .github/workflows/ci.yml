@@ -27,13 +27,13 @@ jobs:
           distribution: temurin
           java-version: '25'
 
-      - name: Set up Android SDK (API 37.1 & Build Tools 36.0.0)
-        uses: android-actions/setup-android@v3
-
-      - name: Install required Android SDK components
+      - name: Install required Android SDK components (API 37.1 & Build Tools 36.0.0)
         run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager "platform-tools" "build-tools;36.0.0" "platforms;android-37.1"
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$(command -v sdkmanager || find "$SDK_ROOT/cmdline-tools" -name sdkmanager -type f | sort -V | tail -n 1)"
+          echo "Using sdkmanager: $SDKMANAGER (SDK_ROOT=$SDK_ROOT)"
+          yes | "$SDKMANAGER" --sdk_root="$SDK_ROOT" --licenses >/dev/null || true
+          "$SDKMANAGER" --sdk_root="$SDK_ROOT" "platform-tools" "build-tools;36.0.0" "platforms;android-37.1"
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
