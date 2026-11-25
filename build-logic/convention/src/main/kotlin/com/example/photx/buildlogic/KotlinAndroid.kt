@@ -9,7 +9,11 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
 
 internal fun Project.configureKotlinAndroid(commonExtension: CommonExtension) {
     commonExtension.apply {
-        compileSdk = libs.intVersion("compileSdk")
+        compileSdk {
+            version = release(libs.intVersion("compileSdk")) {
+                minorApiLevel = libs.intVersion("compileSdkMinor")
+            }
+        }
         buildToolsVersion = libs.stringVersion("buildTools")
 
         defaultConfig.minSdk = libs.intVersion("minSdk")

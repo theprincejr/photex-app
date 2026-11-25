@@ -68,3 +68,18 @@ Every technical term is explained in three parts: **Simple Meaning**, **Technica
 - **Simple meaning:** PhotX's #1 safety promise: never delete an original photo from the phone unless it is 100% verified safe on Telegram with matching bytes.
 - **Technical definition:** Multi-condition pre-deletion guard (`SPEC.md` Section 10) verifying `SYNCED` state, valid `telegramChatId`/`telegramMessageId`, TDLib upload completion, persisted metadata, matching `sha256`, and unchanged local file bytes immediately before deletion.
 - **Use in PhotX:** Enforced progressively — state rules in `:core:model` now, transactional persistence in Phases 2–3, and full deletion guard in Phase 5.
+
+### 16 KB Page Alignment (`PT_LOAD p_align = 0x4000`)
+- **Simple meaning:** Newer Android devices organize memory in 16 KB blocks instead of 4 KB blocks; native C++ `.so` libraries must align their segments to 16 KB boundaries or Android refuses to load them.
+- **Technical definition:** ELF binary program-header alignment (`p_align = 0x4000` / 16,384 bytes on `PT_LOAD` and aligned `PT_GNU_RELRO`) required for 64-bit (`arm64-v8a`, `x86_64`) native libraries on Android 15+ 16 KB page-size devices.
+- **Use in PhotX:** Verified directly on `codaki-apps/tdlib-android`'s `arm64-v8a` and `x86_64` `libtdjni.so` binaries during Increment 1C.
+
+### Sigstore Build-Provenance Attestation
+- **Simple meaning:** A cryptographic "birth certificate" signed by GitHub Actions proving a downloadable `.zip` really came from a specific repository's build workflow and commit rather than being swapped by a hacker.
+- **Technical definition:** SLSA/Sigstore DSSE attestation bundle bound to an OIDC workload identity certificate (Fulcio + Rekor transparency log) linking an artifact's SHA-256 digest to a workflow ref and repository owner (`gh attestation verify`).
+- **Use in PhotX:** Evaluated on `codaki-apps/tdlib-android` (`UNVERIFIED` locally during Increment 1C because `gh` / `cosign` were absent and unauthenticated REST returned 404).
+
+### Supply-Chain Pinning (`tdlib.lock`)
+- **Simple meaning:** Writing down exact commit hashes, library versions, and SHA-256 fingerprints so nobody secretly swaps what goes into a build.
+- **Technical definition:** Pinning container base images by digest, apt snapshots by timestamp, upstream Git repositories by full 40-character commit SHA, and source tarballs (such as OpenSSL 3.5.9) by SHA-256 rather than floating branches like `master`.
+- **Use in PhotX:** Key evaluation criterion comparing `codaki-apps/tdlib-android` (pinned) against `io.github.tdlib-android:core:0.1.1` (unpinned `master`).

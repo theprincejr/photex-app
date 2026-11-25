@@ -3,6 +3,7 @@
 minSdk = "26"
 targetSdk = "36"
 compileSdk = "37"
+compileSdkMinor = "1"
 buildTools = "36.0.0"
 
 # Core Toolchain
