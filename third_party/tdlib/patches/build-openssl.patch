@@ -1,0 +1,58 @@
+Patch for example/android/build-openssl.sh at tdlib/td c8828d50f5eac2fc7089ce1089d7ce9095c61b5e.
+It changes three things:
+1. downloads the sha256-checked release tarball $OPENSSL_URL;
+2. uses $OPENSSL_DIR for the extracted directory;
+3. builds only the ABIs in $OPENSSL_ABIS with -j$OPENSSL_JOBS.
+
+diff --git a/example/android/build-openssl.sh b/example/android/build-openssl.sh
+--- a/example/android/build-openssl.sh
++++ b/example/android/build-openssl.sh
+@@ -31,12 +31,18 @@
+ cd $(dirname $0)
+ 
+ echo "Downloading OpenSSL sources..."
+-rm -f $OPENSSL_VERSION.tar.gz || exit 1
+-$WGET https://github.com/openssl/openssl/archive/refs/tags/$OPENSSL_VERSION.tar.gz || exit 1
+-rm -rf ./openssl-$OPENSSL_VERSION || exit 1
+-tar xzf $OPENSSL_VERSION.tar.gz || exit 1
+-rm $OPENSSL_VERSION.tar.gz || exit 1
+-cd openssl-$OPENSSL_VERSION
++if [ -z "$OPENSSL_URL" ] || [ -z "$OPENSSL_SHA256" ] || [ -z "$OPENSSL_DIR" ] ; then
++  echo "Error: OPENSSL_URL, OPENSSL_SHA256 and OPENSSL_DIR must be set (see tdlib.lock)."
++  exit 1
++fi
++OPENSSL_TARBALL=$(basename -- "$OPENSSL_URL")
++rm -f "$OPENSSL_TARBALL" || exit 1
++$WGET "$OPENSSL_URL" || exit 1
++echo "$OPENSSL_SHA256  $OPENSSL_TARBALL" | sha256sum -c - || exit 1
++rm -rf "./$OPENSSL_DIR" || exit 1
++tar xzf "$OPENSSL_TARBALL" || exit 1
++rm "$OPENSSL_TARBALL" || exit 1
++cd "$OPENSSL_DIR" || exit 1
+ 
+ export ANDROID_NDK_ROOT=$ANDROID_SDK_ROOT/ndk/$ANDROID_NDK_VERSION  # for OpenSSL 3.*.*
+ export ANDROID_NDK_HOME=$ANDROID_NDK_ROOT                           # for OpenSSL 1.1.1
+@@ -61,7 +67,7 @@
+ 
+ SHARED_BUILD_OPTION=$([ "$BUILD_SHARED_LIBS" ] && echo "shared" || echo "no-shared")
+ 
+-for ABI in arm64-v8a armeabi-v7a x86_64 x86 ; do
++for ABI in ${OPENSSL_ABIS:-arm64-v8a armeabi-v7a x86_64 x86} ; do
+   if [[ $ABI == "x86" ]] ; then
+     ./Configure android-x86 ${SHARED_BUILD_OPTION} -U__ANDROID_API__ -D__ANDROID_API__=$ANDROID_API32 || exit 1
+   elif [[ $ABI == "x86_64" ]] ; then
+@@ -75,7 +81,7 @@
+   sed -i.bak 's/-O3/-O3 -ffunction-sections -fdata-sections/g' Makefile || exit 1
+ 
+   make depend -s || exit 1
+-  make -j4 -s || exit 1
++  make -j${OPENSSL_JOBS:-4} -s || exit 1
+ 
+   mkdir -p $OPENSSL_INSTALL_DIR/$ABI/lib/ || exit 1
+   if [ "$BUILD_SHARED_LIBS" ] ; then
+@@ -90,4 +96,4 @@
+ 
+ cd ..
+ 
+-rm -rf ./openssl-$OPENSSL_VERSION || exit 1
++rm -rf "./$OPENSSL_DIR" || exit 1

@@ -22,4 +22,4 @@
 - **Verification:** `spotlessCheck`, `detekt`, `25/25` unit tests across all 5 modules, `:app:lintDebug`, `:feature:auth:lintDebug`, and `:app:assembleDebug` all **PASSED**.
 
 ## Genuine Blocker & Next Goal
-- **TDLib Binary Gate:** `gh` v2.105.0 is installed (`C:\Users\harik\AppData\Local\Programs\gh\bin\gh.exe`), and `gh attestation verify` requires `gh auth login` (interactive GitHub sign-in). Once you sign in (or choose Option C own CI build), we will verify `codaki-apps/tdlib-android`, accept `ADR-003`, and implement `:core:telegram` replacing `PendingTdlibAuthRepository`.
+- **Option C TDLib Build (`theprincejr/photex-app`):** Authenticated `gh attestation verify` against `codaki-apps/tdlib-android` failed (`HTTP 404` due to `codaki26` → `codaki-apps` repo transfer). `ADR-003` is now **Accepted** with **Option C** (`third_party/tdlib/` + `.github/workflows/tdlib-build.yml`). Once `theprincejr/photex-app` publishes `tdlib-1.8.70-c8828d5` with passing `gh attestation verify`, we will implement `:core:telegram` and replace `PendingTdlibAuthRepository`.

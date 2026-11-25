@@ -91,9 +91,9 @@ A maintainable multi-module Android codebase requires consistent naming, strict 
 
 ---
 
-## ADR-003: Android SDK 37.1 Compile Target, Compose BOM 2026.11.01, and TDLib Binary Strategy Evaluation
+## ADR-003: Android SDK 37.1 Compile Target, Compose BOM 2026.11.01, and First-Party TDLib Build Pipeline (Option C)
 
-**Status:** Proposed *(pending owner review of Increment 1C evidence and Sigstore/binary decision)*  
+**Status:** Accepted  
 **Date:** 2026-11-25
 
 ### Context
@@ -101,29 +101,26 @@ A maintainable multi-module Android codebase requires consistent naming, strict 
 During Phase 1 Increment 1B/1C dependency verification:
 1. `androidx.compose:compose-bom:2026.11.01` (`ui-android:1.13.0`, `material3:1.5.0`) failed `:app:checkDebugAarMetadata` against `platforms;android-37.0` because its AAR metadata requires compile SDK minor API level `37.1+`.
 2. Community Maven Central AAR `io.github.tdlib-android:core:0.1.1` was found to embed `OpenSSL_1_1_1w` (upstream EOL Sept 2023) and clone `tdlib/td` `COMMIT_HASH=master`.
-3. A newer reproducible candidate, `codaki-apps/tdlib-android` (`tdlib-1.8.70-c8828d5`), was audited in isolation (`%TEMP%`, outside PhotX).
+3. `codaki-apps/tdlib-android` (`tdlib-1.8.70-c8828d5`) passed SHA-256, `OpenSSL 3.5.9 LTS`, 16 KB ELF alignment, and emulator smoke tests, **but `gh attestation verify` failed with `HTTP 404: Not Found` (`exit 1`)** across both `--repo codaki-apps/tdlib-android` and `--owner codaki-apps` because the attestation had been uploaded under the previous owner `codaki26/tdlib-android` (`attestations/67847786`) prior to repository transfer.
 
-### Proposed Decisions
+### Decision
 
-1. **Android Compile SDK & Compose BOM (Implemented in PhotX Build Config):**
+1. **Android Compile SDK & Compose BOM:**
    - Install `platforms;android-37.1` and configure `compileSdk { version = release(37) { minorApiLevel = 1 } }` in [KotlinAndroid.kt](file:///C:/Users/harik/Videos/Projects/PhotX/build-logic/convention/src/main/kotlin/com/example/photx/buildlogic/KotlinAndroid.kt) and [ci.yml](file:///C:/Users/harik/Videos/Projects/PhotX/.github/workflows/ci.yml).
    - Keep `minSdk = 26`, `targetSdk = 36`, and `buildTools = "36.0.0"`.
-   - Adopt `androidx.compose:compose-bom:2026.11.01` alongside `KSP 2.3.14` and `Hilt 2.60.1` (empirically verified in isolated Probe371 on `AGP 9.5.2`, `Gradle 9.6.1`, `Kotlin 2.4.10`, and `JBR 25.0.4`).
-2. **TDLib Binary Strategy (Evaluation Complete — Adoption Still Paused):**
-   - **Disqualified:** `io.github.tdlib-android:core:0.1.1` (EOL OpenSSL `1.1.1w`, unpinned `master`) and `TGX-Android/tdlib` (Telegram X-only restriction).
-   - **Evaluated Candidate (`codaki-apps/tdlib-android`, `tdlib-1.8.70-c8828d5`):**
-     - **Verified:** Repo rename (`codaki26/tdlib-android` redirects to `codaki-apps/tdlib-android`), pinned `tdlib/td` commit `c8828d50f5eac2fc7089ce1089d7ce9095c61b5e`, NDK `28.2.13676358`, `OpenSSL 3.5.9` LTS binary strings in all 3 ABIs (`arm64-v8a`, `armeabi-v7a`, `x86_64`), SHA-256 (`2afded...`), 16 KB `PT_LOAD` (`0x4000`) & `PT_GNU_RELRO` on 64-bit ABIs, licenses (`BSL-1.0`, `Apache-2.0`, `zlib`), Java JNI compilation with `androidx.annotation`, and API 36 `x86_64` emulator execution (`version=1.8.70`, `commit=c8828d50f5eac2fc7089ce1089d7ce9095c61b5e`).
-     - **UNVERIFIED:** Cryptographic **Sigstore build-provenance attestation** (`gh` / `cosign` unavailable locally; unauthenticated GitHub `/attestations` REST endpoint returned `404`).
-   - **Proposed Path:** Either verify Sigstore attestation via `gh attestation verify ... --repo codaki-apps/tdlib-android` before adopting `codaki-apps/tdlib-android` (packaged inside `:core:telegram`, isolated behind `:core:domain` interfaces, with ProGuard `-keep class org.drinkless.tdlib.** { *; }`), **or** fall back to a PhotX-maintained GitHub Actions TDLib build from a pinned `tdlib/td` commit.
+   - Adopt `androidx.compose:compose-bom:2026.11.01` alongside `KSP 2.3.14` and `Hilt 2.60.1`.
+2. **TDLib Binary Strategy (Option C — First-Party CI Build):**
+   - Disqualify `io.github.tdlib-android:core:0.1.1`, `TGX-Android/tdlib`, and `codaki-apps/tdlib-android` (due to broken `gh attestation verify`).
+   - Host a first-party, manual `workflow_dispatch` GitHub Actions build pipeline ([tdlib-build.yml](file:///C:/Users/harik/Videos/Projects/PhotX/.github/workflows/tdlib-build.yml) + [third_party/tdlib/](file:///C:/Users/harik/Videos/Projects/PhotX/third_party/tdlib/tdlib.lock)) under `theprincejr/photex-app` building pinned `tdlib/td` commit `c8828d50f5eac2fc7089ce1089d7ce9095c61b5e` (`1.8.70`) + `OpenSSL 3.5.9 LTS` + NDK `28.2.13676358` across `arm64-v8a`, `armeabi-v7a`, and `x86_64` with 16 KB ELF gates (`gates.sh`), deterministic zips, `SHA256SUMS`, and first-party `actions/attest` Sigstore provenance.
+   - `:core:telegram` will consume the verified first-party release zip by SHA-256 and `gh attestation verify --repo theprincejr/photex-app`.
 
 ### Alternatives Considered
 
 1. **Stay on `android-37.0` with `compose-bom:2026.09.00`:** Lower friction initially, but skips the latest stable `Compose 1.13.0` / `Material3 1.5.0` BOM release.
-2. **Adopt `codaki-apps/tdlib-android` without Sigstore verification:** Faster, but violates supply-chain rigor for a newly created external publisher until cryptographic attestation is verified or we build it ourselves.
-3. **PhotX-maintained GitHub Actions TDLib build (Option C):** Maximum provenance and control over OpenSSL/TDLib pins, at the cost of maintaining a 60–90 min CI native build recipe.
+2. **Waive `gh attestation verify` on `codaki-apps/tdlib-android`:** Faster, but compromises our cryptographic supply-chain standard when `gh attestation verify` fails.
 
 ### Consequences
 
-- **Positive:** PhotX builds cleanly on `compileSdk 37.1` without changing `targetSdk = 36`; full empirical evidence exists before committing any TDLib binary to the repo.
-- **Negative / Risks:** `codaki-apps/tdlib-android` ships raw Java sources (`TdApi.java` 5.5 MB requiring `androidx.annotation` and increasing initial Java compile time) + `.so` files rather than a Maven AAR, and Sigstore attestation remains `UNVERIFIED` locally until verified with `gh` or replaced by Option C.
+- **Positive:** PhotX builds cleanly on `compileSdk 37.1` without changing `targetSdk = 36`; first-party control over TDLib commit pins, `OpenSSL 3.5.9 LTS`, 16 KB alignment, and passing `gh attestation verify`.
+- **Negative / Risks:** Initial TDLib release compilation takes ~22 minutes on GitHub Actions Ubuntu runners before `:core:telegram` can download and verify the resulting release zip.
 
