@@ -98,3 +98,13 @@ Every technical term is explained in three parts: **Simple Meaning**, **Technica
 - **Simple meaning:** A one-way street for UI updates: screens receive immutable state from the `ViewModel` and send user actions back up as events.
 - **Technical definition:** Presentation pattern where `StateFlow<UiState>` drives stateless `@Composable` rendering while sealed `UiEvent` actions trigger `ViewModel` state mutations.
 - **Use in PhotX:** Implemented in `AuthRoute` / `AuthScreen` (`AuthUiState` down, `AuthUiEvent` up).
+
+### Gateway Pattern (`TdlibGateway`)
+- **Simple meaning:** A thin adapter wrapping a messy external SDK (TDLib's C++/JNI `Client`) behind a clean Kotlin interface so tests can swap in a fast fake without launching native C++ code.
+- **Technical definition:** Anti-corruption / port interface (`internal interface TdlibGateway`) converting asynchronous JNI callback APIs (`Client.send`, `UpdateAuthorizationState`) into Kotlin `suspend` functions (`Outcome<T, AppError>`) and pure DTO events (`TdlibAuthEvent`).
+- **Use in PhotX:** Allows `DefaultAuthRepositoryTest` to test multi-step Telegram authentication on the pure JVM (`0` `UnsatisfiedLinkError`), while `AndroidTdlibGateway` handles real `org.drinkless.tdlib.Client` calls on Android.
+
+### Gradle `BuildConfig` Secret Isolation
+- **Simple meaning:** Keeping personal API keys (`TELEGRAM_API_ID`, `TELEGRAM_API_HASH`) inside untracked local files rather than committing them to GitHub, while still letting the app check at startup whether they were supplied.
+- **Technical definition:** Reading gitignored `secrets.properties` / `local.properties` or environment variables at Gradle configuration time via `providers.fileContents` into `BuildConfig` fields with safe empty defaults, validated at runtime before invoking external APIs.
+- **Use in PhotX:** Configured in `:core:telegram/build.gradle.kts` and checked by `TdlibParametersConfig.validate()` so CI builds succeed with empty defaults and unconfigured installs show a clear UI error instead of crashing.

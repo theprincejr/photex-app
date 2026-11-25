@@ -1,12 +1,12 @@
 # PhotX Project Progress
 
-## Current Milestone: Phase 1 Milestone 1 — `:core:domain` & `:feature:auth` Complete (TDLib Paused on Sigstore Auth)
+## Current Milestone: Phase 1 Complete — First-Party TDLib Build & `:core:telegram` Wired (`33/33` Tests)
 
 | Phase | Target Version | Status | Summary |
 |---|---|---|---|
 | **Phase 0 — Repository Bootstrap** | `v0.1.0-bootstrap` | **Complete (`ADR-001`, `ADR-002` Accepted)** | `:app`, `:core:common`, `:core:model`, `build-logic`, `SyncStateTransitionValidator`, CI, docs |
-| **Phase 1 — Foundation & TDLib Auth** | `v0.1.0` | **In Progress** | Convention plugins (`library`, `compose`, `hilt`, `feature`), `:core:domain`, `:feature:auth`, and `:app` Hilt/Compose wiring **complete & verified (`25/25` unit tests)**. `:core:telegram` paused pending `gh auth login` + `gh attestation verify` (or Option C). |
-| **Phase 2 — Local Gallery & Paging 3** | `v0.2.0` | Not Started | MediaStore scanner, Room + Paging 3, WebP thumbnails, Compose timeline grid, viewer |
+| **Phase 1 — Foundation & TDLib Auth** | `v0.1.0` | **Complete (`ADR-003` Verified & Wired)** | First-party `tdlib-1.8.70-c8828d5` release + Sigstore attestation verified; `:core:domain`, `:core:telegram`, `:feature:auth`, `:app` wired (`33/33` tests, Lint, `app-debug.apk`) |
+| **Phase 2 — Local Gallery & Paging 3** | `v0.2.0` | **Next Up** | MediaStore scanner, Room + Paging 3 (`50k+` item performance), WebP thumbnails, Compose timeline grid, viewer |
 | **Phase 3 — Sequential Auto-Backup** | `v0.3.0` | Not Started | SHA-256 deduplication, persistent single-upload WorkManager queue, `#photx` upload + correlation |
 | **Phase 4 — Remote Thumbnails & Recovery** | `v0.4.0` | Not Started | Coil 3 TDLib fetcher, Saved Messages scanner, fresh-install Room index reconstruction |
 | **Phase 5 — Streaming, Restore & Free Up Space** | `v0.5.0` | Not Started | Media3 cloud playback PoC/implementation, SHA-256-verified restore, zero-data-loss deletion |
@@ -14,12 +14,9 @@
 
 ---
 
-## Completed & Verified Work (`chore/phase1-prep`)
-- **Build & Convention Plugins:** Added `photx.android.library`, `photx.android.compose` (`Compose BOM 2026.11.01`), `photx.android.hilt` (`KSP 2.3.14` + `Hilt 2.60.1`), and `photx.android.feature`.
-- **`:core:domain` (Pure JVM, `explicitApi()`):** `AuthState`, `AuthRepository`, `ObserveAuthStateUseCase`, `InitializeAuthUseCase`, `SubmitPhoneNumberUseCase`, `SubmitAuthCodeUseCase`, `SubmitPasswordUseCase`, `LogOutUseCase`, plus `7` passing unit tests.
-- **`:feature:auth` (Compose Material 3 + Hilt):** `AuthUiState`, `AuthUiEvent`, `AuthViewModel`, `AuthScreen`/`AuthRoute`, `AuthScreenPreviews`, `AuthDomainModule`, plus `3` passing Turbine/Coroutines unit tests.
-- **`:app` Wiring:** `@HiltAndroidApp` (`PhotxApplication`), `@AndroidEntryPoint` (`MainActivity`), `AppModule` binding `DefaultDispatcherProvider` and explicit `PendingTdlibAuthRepository` stub.
-- **Verification:** `spotlessCheck`, `detekt`, `25/25` unit tests across all 5 modules, `:app:lintDebug`, `:feature:auth:lintDebug`, and `:app:assembleDebug` all **PASSED**.
-
-## Genuine Blocker & Next Goal
-- **Option C TDLib Build (`theprincejr/photex-app`):** Authenticated `gh attestation verify` against `codaki-apps/tdlib-android` failed (`HTTP 404` due to `codaki26` → `codaki-apps` repo transfer). `ADR-003` is now **Accepted** with **Option C** (`third_party/tdlib/` + `.github/workflows/tdlib-build.yml`). Once `theprincejr/photex-app` publishes `tdlib-1.8.70-c8828d5` with passing `gh attestation verify`, we will implement `:core:telegram` and replace `PendingTdlibAuthRepository`.
+## Completed & Verified Work (`Phase 1` on `main`)
+- **CI & PR `#1` Merged (`e4b97d0`):** Switched `ci.yml` from failing `android-actions/setup-android@v3` to direct `sdkmanager` invocation (`4m9s` green run); squash-merged PR `#1` into `main`.
+- **First-Party TDLib Release (`tdlib-1.8.70-c8828d5`):** Ran [tdlib-build.yml](file:///C:/Users/harik/Videos/Projects/PhotX/.github/workflows/tdlib-build.yml) ([run 45624183940](https://github.com/theprincejr/photex-app/actions/runs/45624183940)); built `x86_64`, `armeabi-v7a`, and `arm64-v8a` with `OpenSSL 3.5.9 LTS` + 16 KB ELF alignment (`gates-*.txt` PASS), matched `SHA256SUMS` (`876890ff...`), and verified Sigstore provenance with `gh attestation verify --repo theprincejr/photex-app`.
+- **`:core:telegram` Module:** Added [PrepareTdlibArtifactsTask](file:///C:/Users/harik/Videos/Projects/PhotX/core/telegram/build.gradle.kts), `AndroidTdlibConfigProvider`, `TdlibParametersConfig`, `TdlibAuthEvent`, `TdlibAuthStateMapper`, `TdlibGateway` / `AndroidTdlibGateway`, `DefaultAuthRepository`, `TelegramModule`, ProGuard keep rules, and `8` unit tests (`DefaultAuthRepositoryTest` + `TdlibAuthStateMapperTest`).
+- **`:app` Integration:** Removed `PendingTdlibAuthRepository` from [AppModule.kt](file:///C:/Users/harik/Videos/Projects/PhotX/app/src/main/kotlin/com/example/photx/di/AppModule.kt) and added `:core:telegram` so Hilt binds real `DefaultAuthRepository` to `AuthRepository`.
+- **Verification:** `spotlessCheck`, `detekt`, `33/33` unit tests across `:app`, `:core:common`, `:core:domain`, `:core:model`, `:core:telegram`, and `:feature:auth`, Android Lint (`:app`, `:core:telegram`, `:feature:auth`), and `:app:assembleDebug` (packaging uncompressed 16 KB-aligned `libtdjni.so` for all 3 ABIs) all **PASSED**.

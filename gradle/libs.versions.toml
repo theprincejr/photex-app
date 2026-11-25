@@ -14,6 +14,7 @@ hilt = "2.60.1"
 kotlinxCoroutines = "1.11.0"
 
 # AndroidX & Compose
+androidxAnnotation = "1.11.0"
 composeBom = "2026.11.01"
 androidxActivity = "1.13.0"
 androidxLifecycle = "2.11.1"
@@ -31,7 +32,8 @@ turbine = "1.2.1"
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "kotlinxCoroutines" }
 kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "kotlinxCoroutines" }
 
-# Compose & Lifecycle
+# AndroidX & Lifecycle
+androidx-annotation = { group = "androidx.annotation", name = "annotation", version.ref = "androidxAnnotation" }
 androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
 androidx-compose-ui = { group = "androidx.compose.ui", name = "ui" }
 androidx-compose-ui-tooling = { group = "androidx.compose.ui", name = "ui-tooling" }
