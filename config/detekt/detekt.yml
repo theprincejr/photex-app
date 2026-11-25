@@ -1,0 +1,50 @@
+# PhotX Detekt Configuration (Detekt 2.x, used with buildUponDefaultConfig = true)
+
+naming:
+  FunctionNaming:
+    active: true
+    ignoreAnnotated:
+      - 'Composable'
+
+style:
+  MaxLineLength:
+    active: true
+    maxLineLength: 120
+    excludeCommentStatements: true
+  ForbiddenComment:
+    active: true
+    comments:
+      - reason: 'Track deferred work with a GitHub issue or TODO reference instead of bare FIXME/STOPSHIP.'
+        value: 'FIXME:'
+      - reason: 'Track deferred work with a GitHub issue or TODO reference instead of bare FIXME/STOPSHIP.'
+        value: 'STOPSHIP:'
+  MagicNumber:
+    active: true
+    excludes:
+      - '**/test/**'
+      - '**/androidTest/**'
+    ignoreNumbers:
+      - '-1'
+      - '0'
+      - '1'
+      - '2'
+    ignoreHashCodeFunction: true
+    ignorePropertyDeclaration: true
+    ignoreConstantDeclaration: true
+    ignoreCompanionObjectPropertyDeclaration: true
+    ignoreEnums: true
+
+complexity:
+  LongMethod:
+    active: true
+    allowedLines: 60
+  LongParameterList:
+    active: true
+    allowedFunctionParameters: 6
+    allowedConstructorParameters: 8
+    ignoreDefaultParameters: true
+    ignoreDataClasses: true
+
+potential-bugs:
+  UnsafeCallOnNullableType:
+    active: true

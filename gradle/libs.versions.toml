@@ -1,0 +1,43 @@
+[versions]
+# Android SDK
+minSdk = "26"
+targetSdk = "36"
+compileSdk = "37"
+buildTools = "36.0.0"
+
+# Core Toolchain
+agp = "9.5.2"
+kotlin = "2.4.10"
+kotlinxCoroutines = "1.11.0"
+
+# Quality & Testing
+spotless = "8.12.0"
+ktlint = "1.8.0"
+detekt = "2.0.0-alpha.6"
+junit = "4.13.2"
+
+# Phase 1 Candidates (Documented only — do NOT apply until Phase 1)
+# ksp = "2.3.14"
+# hilt = "2.60.1"
+
+[libraries]
+kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "kotlinxCoroutines" }
+kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-test", version.ref = "kotlinxCoroutines" }
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+
+# Build-logic plugin dependencies
+android-gradlePlugin = { group = "com.android.tools.build", name = "gradle", version.ref = "agp" }
+kotlin-gradlePlugin = { group = "org.jetbrains.kotlin", name = "kotlin-gradle-plugin", version.ref = "kotlin" }
+spotless-gradlePlugin = { group = "com.diffplug.spotless", name = "spotless-plugin-gradle", version.ref = "spotless" }
+detekt-gradlePlugin = { group = "dev.detekt", name = "detekt-gradle-plugin", version.ref = "detekt" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
+spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
+detekt = { id = "dev.detekt", version.ref = "detekt" }
+
+# Project convention plugins
+photx-android-application = { id = "photx.android.application" }
+photx-jvm-library = { id = "photx.jvm.library" }
+photx-quality = { id = "photx.quality" }

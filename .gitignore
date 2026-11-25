@@ -1,0 +1,30 @@
+# Gradle & build outputs
+.gradle/
+build/
+**/build/
+build-logic/.gradle/
+build-logic/**/build/
+
+# Local configuration & secrets
+local.properties
+*.keystore
+*.jks
+google-services.json
+secrets.properties
+
+# Android Studio / IntelliJ IDEA
+.idea/
+*.iml
+*.iws
+*.ipr
+.DS_Store
+Thumbs.db
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Logs & temporary files
+*.log
+*.tmp
+inst_user_settings.tmp
+crash-*.txt

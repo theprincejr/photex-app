@@ -1,0 +1,9 @@
+## PhotX Local Machine Configuration (Template)
+# Copy this file to `local.properties` (never commit `local.properties`).
+#
+# Windows example (escape backslashes and drive colon):
+# sdk.dir=C\:\\Users\\<YourUsername>\\AppData\\Local\\Android\\Sdk
+#
+# Telegram TDLib API credentials (Phase 1+ — never commit real values):
+# telegram.api.id=0
+# telegram.api.hash=replace_with_your_api_hash
