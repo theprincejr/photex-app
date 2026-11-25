@@ -54,7 +54,7 @@ jobs:
         run: ./gradlew testDebugUnitTest :core:common:test :core:model:test :core:domain:test --no-daemon
 
       - name: Run Android Lint
-        run: ./gradlew :app:lintDebug :core:telegram:lintDebug :feature:auth:lintDebug --no-daemon
+        run: ./gradlew :app:lintDebug :core:database:lintDebug :core:telegram:lintDebug :feature:auth:lintDebug --no-daemon
 
       - name: Assemble debug APK
         run: ./gradlew :app:assembleDebug --no-daemon

@@ -1,12 +1,12 @@
 # PhotX Project Progress
 
-## Current Milestone: Phase 1 Complete — First-Party TDLib Build & `:core:telegram` Wired (`33/33` Tests)
+## Current Milestone: Phase 2 Increment 2A.1 Hardened — Ready for Review (`45/45` Tests)
 
 | Phase | Target Version | Status | Summary |
 |---|---|---|---|
 | **Phase 0 — Repository Bootstrap** | `v0.1.0-bootstrap` | **Complete (`ADR-001`, `ADR-002` Accepted)** | `:app`, `:core:common`, `:core:model`, `build-logic`, `SyncStateTransitionValidator`, CI, docs |
-| **Phase 1 — Foundation & TDLib Auth** | `v0.1.0` | **Complete (`ADR-003` Verified & Wired)** | First-party `tdlib-1.8.70-c8828d5` release + Sigstore attestation verified; `:core:domain`, `:core:telegram`, `:feature:auth`, `:app` wired (`33/33` tests, Lint, `app-debug.apk`) |
-| **Phase 2 — Local Gallery & Paging 3** | `v0.2.0` | **Next Up** | MediaStore scanner, Room + Paging 3 (`50k+` item performance), WebP thumbnails, Compose timeline grid, viewer |
+| **Phase 1 — Foundation & TDLib Auth** | `v0.1.0` | **Complete (`ADR-003` + Live Emulator Smoke-Tested)** | First-party `tdlib-1.8.70-c8828d5`, `:core:domain`, `:core:telegram`, `:feature:auth`; live phone/OTP/2FA + cold-restart session persistence verified on `PhotX_API_36_x86_64` |
+| **Phase 2 — Local Gallery & Paging 3** | `v0.2.0` | **In Progress (2A + 2A.1 PR Open; 2B Next)** | **2A.1 Hardened:** Eliminated raw `@Upsert` via partial `LocalMediaPatch` (non-key metadata only), enforced `changedRows == 1` CAS + concurrent WAL SHA-256 uniqueness in `SyncStateDao`, added `unique = true` on `local_uri` & Telegram ref indices, exported `1.json` (`c61a470f...`), and `12` DB tests. **Next:** 2B (`:core:media` + `:core:data`) |
 | **Phase 3 — Sequential Auto-Backup** | `v0.3.0` | Not Started | SHA-256 deduplication, persistent single-upload WorkManager queue, `#photx` upload + correlation |
 | **Phase 4 — Remote Thumbnails & Recovery** | `v0.4.0` | Not Started | Coil 3 TDLib fetcher, Saved Messages scanner, fresh-install Room index reconstruction |
 | **Phase 5 — Streaming, Restore & Free Up Space** | `v0.5.0` | Not Started | Media3 cloud playback PoC/implementation, SHA-256-verified restore, zero-data-loss deletion |
@@ -14,9 +14,7 @@
 
 ---
 
-## Completed & Verified Work (`Phase 1` on `main`)
-- **CI & PR `#1` Merged (`e4b97d0`):** Switched `ci.yml` from failing `android-actions/setup-android@v3` to direct `sdkmanager` invocation (`4m9s` green run); squash-merged PR `#1` into `main`.
-- **First-Party TDLib Release (`tdlib-1.8.70-c8828d5`):** Ran [tdlib-build.yml](file:///C:/Users/harik/Videos/Projects/PhotX/.github/workflows/tdlib-build.yml) ([run 45624183940](https://github.com/theprincejr/photex-app/actions/runs/45624183940)); built `x86_64`, `armeabi-v7a`, and `arm64-v8a` with `OpenSSL 3.5.9 LTS` + 16 KB ELF alignment (`gates-*.txt` PASS), matched `SHA256SUMS` (`876890ff...`), and verified Sigstore provenance with `gh attestation verify --repo theprincejr/photex-app`.
-- **`:core:telegram` Module:** Added [PrepareTdlibArtifactsTask](file:///C:/Users/harik/Videos/Projects/PhotX/core/telegram/build.gradle.kts), `AndroidTdlibConfigProvider`, `TdlibParametersConfig`, `TdlibAuthEvent`, `TdlibAuthStateMapper`, `TdlibGateway` / `AndroidTdlibGateway`, `DefaultAuthRepository`, `TelegramModule`, ProGuard keep rules, and `8` unit tests (`DefaultAuthRepositoryTest` + `TdlibAuthStateMapperTest`).
-- **`:app` Integration:** Removed `PendingTdlibAuthRepository` from [AppModule.kt](file:///C:/Users/harik/Videos/Projects/PhotX/app/src/main/kotlin/com/example/photx/di/AppModule.kt) and added `:core:telegram` so Hilt binds real `DefaultAuthRepository` to `AuthRepository`.
-- **Verification:** `spotlessCheck`, `detekt`, `33/33` unit tests across `:app`, `:core:common`, `:core:domain`, `:core:model`, `:core:telegram`, and `:feature:auth`, Android Lint (`:app`, `:core:telegram`, `:feature:auth`), and `:app:assembleDebug` (packaging uncompressed 16 KB-aligned `libtdjni.so` for all 3 ABIs) all **PASSED**.
+## Completed & Verified Work (Session 07 — Increment 2A.1 Hardening)
+- **Live TDLib Auth Smoke Test (`PhotX_API_36_x86_64`):** Verified native `libtdjni.so` loading, `SetTdlibParameters`, live phone/OTP/2FA login (`@PrinceJr`), session persistence after `am force-stop`, zero `AndroidRuntime:E` crashes, and fixed duplicate `AuthStep.ERROR` banner rendering in [AuthScreen.kt](file:///C:/Users/harik/Videos/Projects/PhotX/feature/auth/src/main/kotlin/com/example/photx/feature/auth/AuthScreen.kt).
+- **`:core:database` Hardening (Increment 2A.1):** Replaced `@Upsert` with `upsertLocalMedia` + partial `LocalMediaPatch` (excluding `local_uri`, `sync_state`, `sha256`, and `telegram_*`), added `unique = true` indices (`idx_media_local_uri`, `idx_media_telegram_msg`), enforced `changedRows == 1` CAS + concurrent WAL SHA-256 uniqueness + typed `MediaStateMutationResult` failures in `SyncStateDao`, updated exported `1.json`, and expanded DB tests (`12` tests: `10` `MediaDaoTest` + `2` `PhotxTypeConvertersTest`).
+- **Verification:** `spotlessCheck`, `detekt`, `45/45` unit & Robolectric DAO tests across 7 modules, Android Lint (`:app`, `:core:database`, `:core:telegram`, `:feature:auth`), and `:app:assembleDebug` all **PASSED**.

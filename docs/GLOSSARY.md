@@ -108,3 +108,18 @@ Every technical term is explained in three parts: **Simple Meaning**, **Technica
 - **Simple meaning:** Keeping personal API keys (`TELEGRAM_API_ID`, `TELEGRAM_API_HASH`) inside untracked local files rather than committing them to GitHub, while still letting the app check at startup whether they were supplied.
 - **Technical definition:** Reading gitignored `secrets.properties` / `local.properties` or environment variables at Gradle configuration time via `providers.fileContents` into `BuildConfig` fields with safe empty defaults, validated at runtime before invoking external APIs.
 - **Use in PhotX:** Configured in `:core:telegram/build.gradle.kts` and checked by `TdlibParametersConfig.validate()` so CI builds succeed with empty defaults and unconfigured installs show a clear UI error instead of crashing.
+
+### WAL Mode (Write-Ahead Logging)
+- **Simple meaning:** A SQLite database mode where writes go to a separate log file so the gallery grid can read pages at the same time a background scanner or uploader updates rows without freezing.
+- **Technical definition:** SQLite journaling mode (`JournalMode.WRITE_AHEAD_LOGGING`) enabling concurrent readers alongside an active writer inside `PhotxDatabase`.
+- **Use in PhotX:** Enabled in `DatabaseModule.providePhotxDatabase()` per `SPEC.md` Section 7.3.
+
+### Composite Paging Index (`taken_at, id`)
+- **Simple meaning:** Sorting photos first by capture time and second by their unique ID so two photos taken in the same millisecond never swap places or duplicate between scroll pages.
+- **Technical definition:** Total-order deterministic keyset sort (`ORDER BY taken_at DESC, id DESC`) backed by `@Index(value = ["taken_at", "id"])` for Room `PagingSource`.
+- **Use in PhotX:** Used by `MediaDao.observeTimelinePagingSource()` in `:core:database`.
+
+### Partial `@Update(entity = ...)` & Compare-and-Swap (CAS)
+- **Simple meaning:** Only updating the specific columns a screen/scanner owns (filename, dimensions), and only committing a status change if the row is still in the expected state when saved.
+- **Technical definition:** Narrow Room update projections (`LocalMediaPatch`) paired with conditional SQL (`WHERE id = :id AND sync_state = :expectedState`) that inspect affected-row counts (`changedRows == 1`) before reporting success.
+- **Use in PhotX:** Used in `MediaDao.upsertLocalMedia` (preventing MediaStore scans from overwriting `SYNCED`/`CLOUD_ONLY`) and `SyncStateDao.executeValidatedTransition` (`MediaStateMutationResult.StaleOrConcurrentModification` on `0`-row CAS).

@@ -66,7 +66,7 @@ public fun AuthScreen(uiState: AuthUiState, onEvent: (AuthUiEvent) -> Unit, modi
         )
         Spacer(modifier = Modifier.height(24.dp))
 
-        if (uiState.errorMessage != null) {
+        if (uiState.errorMessage != null && uiState.step != AuthStep.ERROR) {
             AuthErrorBanner(
                 message = uiState.errorMessage,
                 onDismiss = { onEvent(AuthUiEvent.DismissError) }
