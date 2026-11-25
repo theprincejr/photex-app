@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="auth_title">Connect Telegram</string>
+    <string name="auth_subtitle">Back up original photos and videos directly to your Telegram Saved Messages.</string>
+    <string name="auth_initializing">Preparing Telegram client…</string>
+    <string name="auth_phone_label">Phone number (with country code)</string>
+    <string name="auth_phone_placeholder">+15551234567</string>
+    <string name="auth_send_code">Send login code</string>
+    <string name="auth_code_label">Telegram login code</string>
+    <string name="auth_code_hint_digits">Enter the %1$d-digit code sent by Telegram.</string>
+    <string name="auth_verify_code">Verify code</string>
+    <string name="auth_password_label">Two-step verification password</string>
+    <string name="auth_password_hint">Hint: %1$s</string>
+    <string name="auth_verify_password">Unlock account</string>
+    <string name="auth_connected_title">Telegram connected</string>
+    <string name="auth_connected_account">Signed in as %1$s</string>
+    <string name="auth_sign_out">Sign out</string>
+    <string name="auth_retry">Retry</string>
+    <string name="auth_dismiss">Dismiss</string>
+    <string name="auth_closed_message">Telegram session is closed.</string>
+</resources>

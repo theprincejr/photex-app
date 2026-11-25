@@ -51,10 +51,10 @@ jobs:
         run: ./gradlew detekt --no-daemon
 
       - name: Run unit tests
-        run: ./gradlew testDebugUnitTest :core:common:test :core:model:test --no-daemon
+        run: ./gradlew testDebugUnitTest :core:common:test :core:model:test :core:domain:test --no-daemon
 
       - name: Run Android Lint
-        run: ./gradlew :app:lintDebug --no-daemon
+        run: ./gradlew :app:lintDebug :feature:auth:lintDebug --no-daemon
 
       - name: Assemble debug APK
         run: ./gradlew :app:assembleDebug --no-daemon

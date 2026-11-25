@@ -83,3 +83,18 @@ Every technical term is explained in three parts: **Simple Meaning**, **Technica
 - **Simple meaning:** Writing down exact commit hashes, library versions, and SHA-256 fingerprints so nobody secretly swaps what goes into a build.
 - **Technical definition:** Pinning container base images by digest, apt snapshots by timestamp, upstream Git repositories by full 40-character commit SHA, and source tarballs (such as OpenSSL 3.5.9) by SHA-256 rather than floating branches like `master`.
 - **Use in PhotX:** Key evaluation criterion comparing `codaki-apps/tdlib-android` (pinned) against `io.github.tdlib-android:core:0.1.1` (unpinned `master`).
+
+### Hilt (Dependency Injection)
+- **Simple meaning:** Android's automatic wiring system that supplies dependencies (like `AuthRepository` into `AuthViewModel`) without classes constructing them manually.
+- **Technical definition:** Compile-time dependency injection framework built on Dagger, using KSP (`2.3.14`) to generate Android-lifecycle-aware component bindings (`SingletonComponent`, `ViewModelComponent`).
+- **Use in PhotX:** Configured via `photx.android.hilt`; wires `:core:domain` use cases in `AuthDomainModule` and `AppModule` without adding DI annotations to `:core:domain`.
+
+### Turbine (`app.cash.turbine`)
+- **Simple meaning:** A testing helper that makes it easy to assert each value emitted over time by a Kotlin `Flow` or `StateFlow`.
+- **Technical definition:** Coroutine `Flow` testing library providing `flow.test { awaitItem() ... }` to verify ordered state emissions deterministically.
+- **Use in PhotX:** Used in `AuthUseCasesTest` (`:core:domain`) and `AuthViewModelTest` (`:feature:auth`).
+
+### UDF (Unidirectional Data Flow)
+- **Simple meaning:** A one-way street for UI updates: screens receive immutable state from the `ViewModel` and send user actions back up as events.
+- **Technical definition:** Presentation pattern where `StateFlow<UiState>` drives stateless `@Composable` rendering while sealed `UiEvent` actions trigger `ViewModel` state mutations.
+- **Use in PhotX:** Implemented in `AuthRoute` / `AuthScreen` (`AuthUiState` down, `AuthUiEvent` up).

@@ -61,3 +61,16 @@ Cumulative interview questions grounded in PhotX's **actual implemented code and
 
 ### 12. How did you resolve the Compose BOM `2026.11.01` build failure without weakening `targetSdk`?
 > "`compose-bom:2026.11.01` pulls in Compose `1.13.0`, whose AAR metadata enforces a compile SDK of at least `37.1`, failing `:app:checkDebugAarMetadata` on `android-37.0`. By installing `platforms;android-37.1` and configuring `compileSdk { version = release(37) { minorApiLevel = 1 } }` in our convention plugin, we got the latest stable Compose BOM while keeping `minSdk = 26` and `targetSdk = 36` unchanged—so we didn't prematurely opt into Android 17 runtime behavior changes."
+
+---
+
+## Dependency Injection, Jetpack Compose & MVVM/UDF
+
+### 13. Why did you keep Hilt annotations out of `:core:domain` and wire use cases in `AuthDomainModule` instead?
+> "Because `:core:domain` is a pure Kotlin/JVM module with zero framework dependencies, putting `@Provides` factory methods inside `:feature:auth`'s `AuthDomainModule` keeps use cases completely plain Kotlin classes. That makes unit testing `SubmitPhoneNumberUseCase` or `ObserveAuthStateUseCase` effortless—just `SubmitPhoneNumberUseCase(fakeRepo)`—and proves `:core:domain` isn't coupled to Dagger or Hilt."
+
+### 14. How does `AuthViewModel` + `AuthScreen` implement Unidirectional Data Flow and protect sensitive inputs?
+> "`AuthScreen` is completely stateless: it receives an immutable `AuthUiState` and emits sealed `AuthUiEvent` actions upward. `AuthViewModel` validates and delegates submissions via domain use cases, uses `collectAsStateWithLifecycle()` in `AuthRoute`, and explicitly clears `codeInput` and `passwordInput` inside `applyDomainAuthState()` as soon as Telegram's `AuthState` advances—ensuring OTPs and 2FA passwords don't linger in UI state."
+
+### 15. How did `PendingTdlibAuthRepository` let you verify `:app`, `:core:domain`, and `:feature:auth` safely while TDLib was blocked on Sigstore verification?
+> "Because `:feature:auth` and `:app` depend only on the `:core:domain` `AuthRepository` interface—not on TDLib—we bound `PendingTdlibAuthRepository` in `AppModule` to surface an explicit configuration error state. That allowed us to compile, lint, and unit-test the full Hilt + Compose + Domain vertical slice (`25/25` unit tests) without introducing an unverified native binary."
