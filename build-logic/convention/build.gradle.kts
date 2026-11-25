@@ -24,6 +24,7 @@ dependencies {
     implementation(libs.compose.gradlePlugin)
     implementation(libs.ksp.gradlePlugin)
     implementation(libs.hilt.gradlePlugin)
+    implementation(libs.room.gradlePlugin)
     implementation(libs.spotless.gradlePlugin)
     implementation(libs.detekt.gradlePlugin)
 }
@@ -49,6 +50,10 @@ gradlePlugin {
         register("androidFeature") {
             id = "photx.android.feature"
             implementationClass = "PhotxAndroidFeatureConventionPlugin"
+        }
+        register("androidRoom") {
+            id = "photx.android.room"
+            implementationClass = "PhotxAndroidRoomConventionPlugin"
         }
         register("jvmLibrary") {
             id = "photx.jvm.library"

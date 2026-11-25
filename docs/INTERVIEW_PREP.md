@@ -80,3 +80,16 @@ Cumulative interview questions grounded in PhotX's **actual implemented code and
 
 ### 17. How does `:core:telegram` consume TDLib binaries cleanly with Gradle Configuration Cache and zero Git bloat?
 > "Instead of checking in 60+ MB of `.so` binaries and a 5.5 MB generated `TdApi.java` into Git, our `tdlib-build.yml` workflow builds signed, 16 KB-aligned binaries as an immutable GitHub Release (`tdlib-1.8.70-c8828d5`) verified via `gh attestation verify`. `:core:telegram` defines a configuration-cache-safe `PrepareTdlibArtifactsTask` that downloads the release zip into Gradle's user cache only when missing, enforces the pinned SHA-256 digest (`876890ff...`) with ZipSlip path protection, and wires the extracted `java/` and `jniLibs/` directories into AGP 9 variant sources via `androidComponents.onVariants`."
+
+---
+
+## Room Database & Paging 3 (`:core:database`)
+
+### 18. How does `:core:database` enforce PhotX's `SyncState` invariants in SQLite rather than relying on caller discipline alone?
+> "We separated timeline/lookup queries (`MediaDao`) from state-mutating operations (`SyncStateDao`). Raw `UPDATE media_items SET sync_state = ...` queries inside `SyncStateDao` are marked `protected`, so external modules cannot call them directly. Public `@Transaction` gates (`transitionSyncState`, `markSyncedWithTelegramRef`, and `markCloudOnlyIfVerified`) read the current `MediaSyncSnapshot` inside a transaction, run `SyncStateTransitionValidator.validate()`, verify Telegram chat/message IDs and SHA-256 presence before permitting `SYNCED -> CLOUD_ONLY`, and execute compare-and-swap SQL updates only when `Allowed`."
+
+### 19. Why index `(taken_at, id)` and sort Paging 3 by `ORDER BY taken_at DESC, id DESC` instead of `taken_at DESC` alone?
+> "Burst shots or batch downloads often share identical `taken_at` epoch milliseconds. Without a unique secondary tie-breaker column (`id DESC`), SQLite's page boundaries across `LIMIT/OFFSET` or Paging 3 invalidations become nondeterministic, which can cause duplicate or skipped grid cells while scrolling."
+
+### 20. Why was Room `@Upsert` unsafe for MediaStore reconciliation, and how did you harden it while allowing duplicate local files before backup?
+> "Room's `@Upsert` generates a full-row `UPDATE` covering `sync_state`, `sha256`, and Telegram columns whenever a primary key conflicts—allowing a local scan to accidentally wipe backup metadata or reset `SYNCED` back to `LOCAL_ONLY`. Replacing it with `upsertLocalMedia(LocalMediaDiscovery)` (`INSERT OR IGNORE` in `LOCAL_ONLY` + partial `@Update` `LocalMediaPatch`) physically omits protected columns from the generated SQL. Meanwhile, leaving `idx_media_sha256` non-unique lets multiple local copies record identical hashes (`recordLocalSha256`), while `SyncStateDao.markSyncedWithTelegramRef` enforces a single canonical `SYNCED`/`CLOUD_ONLY` row per digest (`RejectedDuplicateBackup`) inside a transaction alongside `changedRows == 1` CAS verification."

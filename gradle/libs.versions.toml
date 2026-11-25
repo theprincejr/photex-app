@@ -12,6 +12,8 @@ kotlin = "2.4.10"
 ksp = "2.3.14"
 hilt = "2.60.1"
 kotlinxCoroutines = "1.11.0"
+paging = "3.5.3"
+room = "2.8.5"
 
 # AndroidX & Compose
 androidxAnnotation = "1.11.0"
@@ -26,6 +28,8 @@ ktlint = "1.8.0"
 detekt = "2.0.0-alpha.6"
 junit = "4.13.2"
 turbine = "1.2.1"
+robolectric = "4.18.1"
+androidxTestCore = "1.7.0"
 
 [libraries]
 # Coroutines
@@ -51,6 +55,18 @@ androidx-hilt-navigation-compose = { group = "androidx.hilt", name = "hilt-navig
 # Testing
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 turbine = { group = "app.cash.turbine", name = "turbine", version.ref = "turbine" }
+robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
+androidx-test-core = { group = "androidx.test", name = "core-ktx", version.ref = "androidxTestCore" }
+
+# Room & Paging
+androidx-room-runtime = { group = "androidx.room", name = "room-runtime", version.ref = "room" }
+androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
+androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
+androidx-room-paging = { group = "androidx.room", name = "room-paging", version.ref = "room" }
+androidx-room-testing = { group = "androidx.room", name = "room-testing", version.ref = "room" }
+androidx-paging-common = { group = "androidx.paging", name = "paging-common", version.ref = "paging" }
+androidx-paging-runtime = { group = "androidx.paging", name = "paging-runtime", version.ref = "paging" }
+androidx-paging-compose = { group = "androidx.paging", name = "paging-compose", version.ref = "paging" }
 
 # Build-logic plugin dependencies
 android-gradlePlugin = { group = "com.android.tools.build", name = "gradle", version.ref = "agp" }
@@ -58,6 +74,7 @@ kotlin-gradlePlugin = { group = "org.jetbrains.kotlin", name = "kotlin-gradle-pl
 compose-gradlePlugin = { group = "org.jetbrains.kotlin", name = "compose-compiler-gradle-plugin", version.ref = "kotlin" }
 ksp-gradlePlugin = { group = "com.google.devtools.ksp", name = "symbol-processing-gradle-plugin", version.ref = "ksp" }
 hilt-gradlePlugin = { group = "com.google.dagger", name = "hilt-android-gradle-plugin", version.ref = "hilt" }
+room-gradlePlugin = { group = "androidx.room", name = "room-gradle-plugin", version.ref = "room" }
 spotless-gradlePlugin = { group = "com.diffplug.spotless", name = "spotless-plugin-gradle", version.ref = "spotless" }
 detekt-gradlePlugin = { group = "dev.detekt", name = "detekt-gradle-plugin", version.ref = "detekt" }
 
@@ -68,6 +85,7 @@ kotlin-jvm = { id = "org.jetbrains.kotlin.jvm", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
 hilt = { id = "com.google.dagger.hilt.android", version.ref = "hilt" }
+room = { id = "androidx.room", version.ref = "room" }
 spotless = { id = "com.diffplug.spotless", version.ref = "spotless" }
 detekt = { id = "dev.detekt", version.ref = "detekt" }
 
@@ -77,5 +95,6 @@ photx-android-library = { id = "photx.android.library" }
 photx-android-compose = { id = "photx.android.compose" }
 photx-android-hilt = { id = "photx.android.hilt" }
 photx-android-feature = { id = "photx.android.feature" }
+photx-android-room = { id = "photx.android.room" }
 photx-jvm-library = { id = "photx.jvm.library" }
 photx-quality = { id = "photx.quality" }
