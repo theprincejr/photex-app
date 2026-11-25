@@ -25,8 +25,11 @@ A sealed result type separating `Success(value)` and `Failure(error)` with typed
 ### Single Source of Truth (Room)
 Design rule where external data sources (MediaStore, TDLib) write into the local Room database, and ViewModels/UI observe Room via `Flow` rather than merging independent in-memory network/UI states.
 
-### SyncState Machine
-The persisted lifecycle states (`LOCAL_ONLY`, `QUEUED`, `UPLOADING`, `SYNCED`, `CLOUD_ONLY`, `FAILED`) with strictly validated transitions (`SyncState.canTransitionTo`) enforcing that local media cannot skip verification or be deleted before confirmed cloud upload.
+### SyncState Machine & Transition Validator
+The persisted lifecycle states (`LOCAL_ONLY`, `QUEUED`, `UPLOADING`, `SYNCED`, `CLOUD_ONLY`, `FAILED`) with explicitly defined transitions (`SyncState.canTransitionTo`) and a centralized `SyncStateTransitionValidator` returning a typed sealed result (`SyncStateTransitionResult.Allowed` / `Rejected`) or strict `requireTransition()`. In later phases, repositories must run this validator inside atomic Room transactions rather than relying on in-memory checks alone.
+
+### Sealed Result Type
+A Kotlin `sealed interface` or `sealed class` whose subclasses are fixed at compile time (such as `SyncStateTransitionResult` in `:core:model` or `Outcome` in `:core:common`). `when` expressions over sealed types force callers to handle every success and failure branch explicitly without throwing exceptions for expected business rejections.
 
 ### Zero-Data-Loss Invariant (Free Up Space)
 PhotX's highest-priority safety rule (`SPEC.md` Section 10): a local original file may only be deleted after verifying `SYNCED` state, valid Telegram chat/message IDs, TDLib upload confirmation, persisted metadata, and matching SHA-256 digest immediately prior to deletion.

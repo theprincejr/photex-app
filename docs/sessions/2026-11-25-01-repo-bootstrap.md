@@ -87,5 +87,25 @@ Establish PhotX's production-grade multi-module Android repository foundation (`
 
 ---
 
-## 11. Next Session Goal
-Review and accept `ADR-001` & `ADR-002`, then enter **Phase 1 planning (Clarification-First)**: verify KSP `2.3.14` + Hilt `2.60.1` + TDLib AAR (`arm64-v8a` & `x86_64`) compatibility before introducing `:core:domain`, `:core:telegram`, and `:feature:auth`.
+## 11. Phase 0 Safety Hardening Update (Post-Bootstrap Review)
+After reviewing the initial bootstrap (`11afa4c`), we identified that `SyncState.allowedNextStates()` / `canTransitionTo()` only described valid state moves without providing a centralized validator or typed rejection diagnostics.
+
+### Added Unit (Implemented & Verified)
+- **`core/model/src/main/kotlin/com/example/photx/core/model/SyncStateTransitionValidator.kt`:**
+  - `SyncStateTransitionResult` (`Allowed(from, to)` and `Rejected(from, to, allowedStates)` with `reason`) kept dependency-free inside `:core:model`.
+  - `SyncStateTransitionValidator.validate(from, to)` for typed business/repository flows (no exception thrown for expected rejections).
+  - `SyncStateTransitionValidator.requireTransition(from, to)` for invariant boundaries where an illegal transition indicates a programming bug (`IllegalStateException`).
+- **`core/model/src/test/kotlin/com/example/photx/core/model/SyncStateTransitionValidatorTest.kt`:**
+  - Tests the complete `6 × 6 = 36` state-pair matrix, verifying all 8 allowed transitions and all 28 rejected transitions (`from`, `to`, `allowedStates`, `reason`), plus `requireTransition()` failure diagnostics.
+- **Explicit Scope Boundary (Not Yet Implemented):** This in-memory validator does not enforce Room transaction atomicity or verify remote Telegram backups/SHA-256 digests; transactional repository enforcement (Phases 2–3) and the Free Up Space deletion guard (Phase 5) will build on top of it.
+
+### Post-Update Verification Results (Windows PowerShell + JBR 25)
+- `.\gradlew.bat spotlessCheck --no-daemon`: **PASSED** (`BUILD SUCCESSFUL`).
+- `.\gradlew.bat detekt --no-daemon`: **PASSED** (`BUILD SUCCESSFUL`).
+- `.\gradlew.bat testDebugUnitTest :core:common:test :core:model:test --no-daemon`: **PASSED** (`15` tests run, `0` failures, `0` errors, `0` skipped — `AppSanityTest` 1, `DispatcherProviderTest` 2, `OutcomeTest` 3, `PhotxMetadataTest` 2, `SyncStateTest` 3, `SyncStateTransitionValidatorTest` 4).
+- `.\gradlew.bat :app:lintDebug --no-daemon`: **PASSED** (`BUILD SUCCESSFUL`).
+
+---
+
+## 12. Next Session Goal
+Review the final `ADR-001` & `ADR-002` records and Phase 0 foundation, accept the ADRs, align documentation formats (`docs/learning/` progressive guides), and enter **Phase 1 — Understand & Clarify** (verifying `KSP 2.3.14` + `Hilt 2.60.1` + TDLib AAR `arm64-v8a` / `x86_64` compatibility).

@@ -19,10 +19,10 @@ Realistic engineering interview questions grounded in PhotX's actual architectur
 ### 5. Why do you inject `DispatcherProvider` in `:core:common` instead of calling `Dispatchers.IO` directly?
 > "Hardcoding `Dispatchers.IO` or `Dispatchers.Default` couples business and repository logic to real thread pools, making coroutine tests flaky or slow. Injecting `DispatcherProvider` lets production use `DefaultDispatcherProvider` while unit tests swap in `StandardTestDispatcher` or `UnconfinedTestDispatcher` to control execution deterministically with virtual time."
 
-### 6. Why did you model `SyncState.canTransitionTo()` as an explicit state machine inside `:core:model`?
-> "PhotX's most critical invariant is zero data loss—especially for **Free up space**, which deletes local originals only after verified cloud upload. By encoding valid state transitions directly in `SyncState` and unit testing disallowed transitions (like jumping from `LOCAL_ONLY` to `CLOUD_ONLY`), invalid mutations are rejected in pure domain logic rather than relying on UI buttons being disabled."
+### 6. Why did you add `SyncStateTransitionValidator` on top of `SyncState.canTransitionTo()`, and is the validator alone enough for deletion safety?
+> "`canTransitionTo()` on an enum only answers a boolean question—it doesn't enforce transitions or give callers structured diagnostic info when a move is invalid. So we added `SyncStateTransitionValidator` in `:core:model` returning a typed sealed `SyncStateTransitionResult` (`Allowed` or `Rejected` with `from`, `to`, `allowedStates`, and `reason`), keeping `:core:model` dependency-free from `:core:common`, plus `requireTransition()` for invariant assertions. Crucially, an in-memory validator alone is **not** enough for database or deletion safety: once `:core:database` and `:core:data` exist in Phases 2–5, repositories must run `validate()` inside an atomic Room `@Transaction`, and Free Up Space must also pass a dedicated remote/SHA-256 verification guard before deleting any local file."
 
-### 7. Why use `Outcome<T, AppError>` instead of throwing exceptions across layers?
+### 7. Why use `Outcome<T, AppError>` and `SyncStateTransitionResult` instead of throwing exceptions across layers?
 > "Exceptions are invisible in Kotlin function signatures and easy to forget to catch. Returning a sealed `Outcome<T, AppError>` forces callers to handle both `Success` and typed failure cases (`Validation`, `Io`, `Network`, `Unauthorized`, `Unexpected`), while keeping `CancellationException` propagation intact for structured concurrency."
 
 ### 8. Why keep `com.example.photx` temporary instead of inventing a random release package ID?

@@ -23,10 +23,11 @@ PhotX is an offline-first Android gallery backed by Room (local source of truth)
    - Dependencies point strictly inward: Presentation (`:feature:*`) → Domain (`:core:domain`) ← Data (`:core:data`).
    - External updates from MediaStore or TDLib must persist into Room before UI state observes them.
 2. **Incremental Multi-Module Strategy:**
-   - **Bootstrap (Phase 0):** Create only `:app`, `:core:common` (pure JVM), `:core:model` (pure JVM), and `build-logic:convention`.
+   - **Bootstrap (Phase 0):** Create only `:app`, `:core:common` (pure JVM), `:core:model` (pure JVM, zero internal module dependencies), and `build-logic:convention`. `:core:model` models core types and pure state-machine validation (`SyncStateTransitionValidator` + `SyncStateTransitionResult`) without depending on `:core:common`.
    - **Phase 1+ Domain Module (`:core:domain`):** Introduce a dedicated **pure Kotlin/JVM** `:core:domain` module when the first repository contract and use case are implemented (not created empty during bootstrap).
      - Dependency direction: `:feature:*` → `:core:domain` → `:core:model`, `:core:common`, and `:core:data` → `:core:domain`.
      - Because `:core:domain` uses `org.jetbrains.kotlin.jvm`, Android, Room, Compose, and TDLib imports are prevented at compile time.
+   - **Implemented vs. Future Safety Boundary:** Currently only the pure in-memory `SyncStateTransitionValidator` exists in `:core:model`. Transactional Room persistence (`@Transaction` single-gate state updates in `:core:database`/`:core:data`) and the multi-check **Free Up Space Deletion Guard** (verifying Telegram IDs, TDLib upload confirmation, and SHA-256 integrity) are **not yet implemented** and belong to Phases 2–5.
    - **Infrastructure & Feature Modules:** Introduce `:core:telegram`, `:core:database`, `:core:datastore`, `:core:media`, `:core:data`, `:core:designsystem`, `:core:ui`, `:core:testing`, and `:feature:*` (`auth`, `gallery`, `viewer`, `backup`, `settings`) strictly in their respective implementation phases.
    - Feature modules must never depend on each other.
 3. **Convention Plugins (`build-logic/convention`):**
