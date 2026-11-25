@@ -6,7 +6,7 @@ All significant architectural, module-boundary, and toolchain decisions for Phot
 
 ## ADR-001: Architecture and Module Strategy
 
-**Status:** Proposed *(pending owner review of the completed repository bootstrap)*  
+**Status:** Accepted  
 **Date:** 2026-11-25
 
 ### Context
@@ -49,7 +49,7 @@ PhotX is an offline-first Android gallery backed by Room (local source of truth)
 
 ## ADR-002: Naming, Namespace, Code Style, and Toolchain Conventions
 
-**Status:** Proposed *(pending owner review of the completed repository bootstrap)*  
+**Status:** Accepted  
 **Date:** 2026-11-25
 
 ### Context
