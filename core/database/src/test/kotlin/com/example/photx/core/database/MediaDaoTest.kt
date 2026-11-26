@@ -490,6 +490,97 @@ class MediaDaoTest {
         assertNull(mediaDao.getById("cloud-locked")?.localUri)
     }
 
+    @Test
+    fun `given rebind interrupted uploads and backed up failed rows_then preserves integrity`() = runTest {
+        val reconciliationDao = database.localReconciliationDao()
+
+        mediaDao.upsertLocalMedia(localDiscovery(id = "move-1", localUri = "content://old/1", takenAt = 10L))
+        promoteToSynced(id = "move-1", sha256 = "sha-move-1", chatId = 7L, messageId = 77L)
+        mediaDao.updateLocalThumbPath("move-1", "/thumbs/move-1.webp")
+
+        val reboundCount = reconciliationDao.rebindLocalUri(
+            id = "move-1",
+            expectedOldUri = "content://old/1",
+            discovery = localDiscovery(
+                id = "move-1",
+                localUri = "content://new/999",
+                takenAt = 10L,
+                fileName = "MOVED_1.jpg"
+            )
+        )
+        assertEquals(1, reboundCount)
+        val reboundRow = mediaDao.getById("move-1")
+        assertEquals("content://new/999", reboundRow?.localUri)
+        assertEquals("MOVED_1.jpg", reboundRow?.fileName)
+        assertEquals(SyncState.SYNCED, reboundRow?.syncState)
+        assertEquals("sha-move-1", reboundRow?.sha256)
+        assertEquals("/thumbs/move-1.webp", reboundRow?.localThumbPath)
+
+        // Stale expectedOldUri must no-op (changedRows == 0).
+        assertEquals(
+            0,
+            reconciliationDao.rebindLocalUri(
+                id = "move-1",
+                expectedOldUri = "content://old/1",
+                discovery = localDiscovery(id = "move-1", localUri = "content://new/1000", takenAt = 10L)
+            )
+        )
+
+        // Backed-up FAILED row (e.g., failed restore) must NEVER be deleted by deleteUnbackedLocalRecord.
+        val db = database.openHelper.writableDatabase
+        db.execSQL(
+            "INSERT INTO media_items VALUES (" +
+                "'backed-failed', 'sha-bf', 'content://bf/1', NULL, 'IMAGE', 10, 88, NULL, NULL, " +
+                "'bf.jpg', 'image/jpeg', 1, 1, 1, 0, 1, 'FAILED')"
+        )
+        assertEquals(0, reconciliationDao.deleteUnbackedLocalRecord("backed-failed"))
+        assertNotNull(mediaDao.getById("backed-failed"))
+
+        // Interrupted UPLOADING records (except actively running IDs) recover cleanly to QUEUED.
+        mediaDao.upsertLocalMedia(localDiscovery(id = "stuck-1", localUri = "content://stuck/1", takenAt = 20L))
+        mediaDao.upsertLocalMedia(localDiscovery(id = "active-1", localUri = "content://active/1", takenAt = 21L))
+        syncStateDao.transitionSyncState("stuck-1", SyncState.QUEUED)
+        syncStateDao.transitionSyncState("stuck-1", SyncState.UPLOADING)
+        syncStateDao.transitionSyncState("active-1", SyncState.QUEUED)
+        syncStateDao.transitionSyncState("active-1", SyncState.UPLOADING)
+
+        val recovered = syncStateDao.recoverInterruptedUploads(activeUploadIds = setOf("active-1"), requeue = true)
+        assertEquals(1, recovered)
+        assertEquals(SyncState.QUEUED, mediaDao.getById("stuck-1")?.syncState)
+        assertEquals(SyncState.UPLOADING, mediaDao.getById("active-1")?.syncState)
+        assertEquals(0, syncStateDao.recoverInterruptedUploads(activeUploadIds = setOf("active-1"), requeue = true))
+    }
+
+    @Test
+    fun `given expectedFrom guard and queued failure_when transitioning_then enforces atomic cas`() = runTest {
+        mediaDao.upsertLocalMedia(localDiscovery(id = "q-atomic", localUri = "content://q/atomic", takenAt = 1L))
+        mediaDao.upsertLocalMedia(localDiscovery(id = "u-live", localUri = "content://u/live", takenAt = 2L))
+        syncStateDao.transitionSyncState("q-atomic", SyncState.QUEUED)
+        syncStateDao.transitionSyncState("u-live", SyncState.QUEUED)
+        syncStateDao.transitionSyncState("u-live", SyncState.UPLOADING)
+
+        val staleQueuedFail = syncStateDao.transitionSyncState(
+            id = "u-live",
+            targetState = SyncState.FAILED,
+            expectedFrom = SyncState.QUEUED
+        )
+        assertEquals(
+            MediaStateMutationResult.StaleOrConcurrentModification(
+                itemId = "u-live",
+                expectedState = SyncState.QUEUED,
+                actualState = SyncState.UPLOADING
+            ),
+            staleQueuedFail
+        )
+        assertEquals(SyncState.UPLOADING, mediaDao.getById("u-live")?.syncState)
+
+        assertEquals(
+            MediaStateMutationResult.Applied(SyncState.QUEUED, SyncState.FAILED),
+            syncStateDao.transitionSyncState("q-atomic", SyncState.FAILED, expectedFrom = SyncState.QUEUED)
+        )
+        assertEquals(SyncState.FAILED, mediaDao.getById("q-atomic")?.syncState)
+    }
+
     private suspend fun promoteToSynced(
         id: String,
         sha256: String,

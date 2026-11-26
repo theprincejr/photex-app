@@ -9,6 +9,7 @@ class SyncStateTransitionValidatorTest {
     private val expectedAllowedTransitions: Set<Pair<SyncState, SyncState>> = setOf(
         SyncState.LOCAL_ONLY to SyncState.QUEUED,
         SyncState.QUEUED to SyncState.UPLOADING,
+        SyncState.QUEUED to SyncState.FAILED,
         SyncState.UPLOADING to SyncState.SYNCED,
         SyncState.UPLOADING to SyncState.FAILED,
         SyncState.FAILED to SyncState.QUEUED,

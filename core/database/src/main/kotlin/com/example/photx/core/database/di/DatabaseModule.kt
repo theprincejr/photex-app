@@ -3,6 +3,7 @@ package com.example.photx.core.database.di
 import android.content.Context
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import com.example.photx.core.database.LocalReconciliationDao
 import com.example.photx.core.database.MediaDao
 import com.example.photx.core.database.PhotxDatabase
 import com.example.photx.core.database.SyncStateDao
@@ -12,6 +13,16 @@ import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
 import javax.inject.Singleton
+
+/**
+ * Groups the media DAOs exposed by `:core:database` so downstream modules do not need a
+ * direct compile dependency on `androidx.room.RoomDatabase`.
+ */
+public data class PhotxMediaDaos(
+    val mediaDao: MediaDao,
+    val syncStateDao: SyncStateDao,
+    val localReconciliationDao: LocalReconciliationDao
+)
 
 /**
  * Hilt module provisioning the WAL-enabled [PhotxDatabase] and [MediaDao].
@@ -36,4 +47,15 @@ public object DatabaseModule {
 
     @Provides
     public fun provideSyncStateDao(database: PhotxDatabase): SyncStateDao = database.syncStateDao()
+
+    @Provides
+    public fun provideLocalReconciliationDao(database: PhotxDatabase): LocalReconciliationDao =
+        database.localReconciliationDao()
+
+    @Provides
+    public fun providePhotxMediaDaos(database: PhotxDatabase): PhotxMediaDaos = PhotxMediaDaos(
+        mediaDao = database.mediaDao(),
+        syncStateDao = database.syncStateDao(),
+        localReconciliationDao = database.localReconciliationDao()
+    )
 }
