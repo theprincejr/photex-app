@@ -19,4 +19,7 @@ public abstract class PhotxDatabase : RoomDatabase() {
 
     /** DAO enforcing centrally validated transactional sync state transitions. */
     public abstract fun syncStateDao(): SyncStateDao
+
+    /** DAO providing batch reconciliation snapshots and unbacked local index pruning. */
+    public abstract fun localReconciliationDao(): LocalReconciliationDao
 }

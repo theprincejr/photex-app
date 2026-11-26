@@ -68,6 +68,7 @@ public sealed interface MediaStateMutationResult {
  * and remote backup invariants before modifying `sync_state` or clearing local original URIs.
  */
 @Dao
+@Suppress("TooManyFunctions")
 public abstract class SyncStateDao {
     @Query(
         "SELECT id, sha256, sync_state AS syncState, " +
@@ -229,6 +230,30 @@ public abstract class SyncStateDao {
             )
         }
     )
+
+    @Query("SELECT id FROM media_items WHERE sync_state = :syncState")
+    protected abstract suspend fun findIdsBySyncState(syncState: SyncState): List<String>
+
+    /**
+     * Recovers any stale [SyncState.UPLOADING] rows not in an authoritatively verified
+     * [activeUploadIds] set through [SyncStateTransitionValidator] (`UPLOADING -> FAILED`, and
+     * optionally `FAILED -> QUEUED`).
+     */
+    @Transaction
+    public open suspend fun recoverInterruptedUploads(activeUploadIds: Set<String>, requeue: Boolean = false): Int {
+        val staleIds = findIdsBySyncState(SyncState.UPLOADING).filter { it !in activeUploadIds }
+        var recoveredCount = 0
+        staleIds.forEach { id ->
+            val failedOutcome = transitionSyncState(id = id, targetState = SyncState.FAILED)
+            if (failedOutcome is MediaStateMutationResult.Applied) {
+                if (requeue) {
+                    transitionSyncState(id = id, targetState = SyncState.QUEUED)
+                }
+                recoveredCount += 1
+            }
+        }
+        return recoveredCount
+    }
 
     internal companion object {
         val BACKED_UP_STATES: List<SyncState> = listOf(SyncState.SYNCED, SyncState.CLOUD_ONLY)

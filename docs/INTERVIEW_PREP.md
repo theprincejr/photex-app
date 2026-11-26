@@ -93,3 +93,19 @@ Cumulative interview questions grounded in PhotX's **actual implemented code and
 
 ### 20. Why was Room `@Upsert` unsafe for MediaStore reconciliation, and how did you harden it while allowing duplicate local files before backup?
 > "Room's `@Upsert` generates a full-row `UPDATE` covering `sync_state`, `sha256`, and Telegram columns whenever a primary key conflicts—allowing a local scan to accidentally wipe backup metadata or reset `SYNCED` back to `LOCAL_ONLY`. Replacing it with `upsertLocalMedia(LocalMediaDiscovery)` (`INSERT OR IGNORE` in `LOCAL_ONLY` + partial `@Update` `LocalMediaPatch`) physically omits protected columns from the generated SQL. Meanwhile, leaving `idx_media_sha256` non-unique lets multiple local copies record identical hashes (`recordLocalSha256`), while `SyncStateDao.markSyncedWithTelegramRef` enforces a single canonical `SYNCED`/`CLOUD_ONLY` row per digest (`RejectedDuplicateBackup`) inside a transaction alongside `changedRows == 1` CAS verification."
+
+---
+
+## MediaStore Indexing, Thumbnails & Data Boundary (`:core:media` + `:core:data`)
+
+### 21. Why did you keep `PagingData` out of `:core:domain` in Increment 2B (`ADR-004`)?
+> "Putting `androidx.paging.PagingData` into `:core:domain` forces a pure-Kotlin business logic module to depend on `paging-common` and leaks Android UI pagination lifecycle concerns (`LoadState`, `cachedIn(viewModelScope)`) into domain interfaces. Instead, `:core:domain` exposes pure reactive counts and item lookups (`ObserveGalleryTimelineUseCase`, `RefreshLocalMediaUseCase`), while `:core:data` exposes `GalleryPagingRepository` backed directly by Room's `MediaDao.observeTimelinePagingSource()` (`pageSize = 60`, `prefetchDistance = 30`)."
+
+### 22. How does `LocalThumbnailGenerator` avoid `OutOfMemoryError` and partial files on disk?
+> "First it opens the `ContentResolver` stream with `BitmapFactory.Options().apply { inJustDecodeBounds = true }`—explicitly separating stream opening from `decodeStream` because `inJustDecodeBounds` always returns `null` for the bitmap—to compute a power-of-two `inSampleSize` against `320px`. Next it reads `ExifInterface.TAG_ORIENTATION` to rotate/flip only the small subsampled bitmap, scales cleanly within bounds, compresses to WebP into a unique `*.tmp.<nanos>` file, and atomically replaces the final `.webp` target (`ATOMIC_MOVE` with `REPLACE_EXISTING` fallback), preserving any existing valid thumbnail if decoding fails."
+
+### 23. How does PhotX distinguish user-deleted photos from Android 14+ partial photo permissions?
+> "On API 34+, `READ_MEDIA_VISUAL_USER_SELECTED` exposes only user-picked photos through `MediaStore`, making unpicked files appear absent from queries even though they still exist on disk. `DefaultGalleryRepository` checks `MediaPermissionChecker` first: under `Partial` or `Denied`, disappearance reconciliation is completely skipped. Only under `MediaPermissionState.Full`—and after `MediaUriExistenceProbe` confirms a tracked URI is genuinely gone (`CONFIRMED_MISSING`)—do verified `SYNCED` items transition via `SyncStateDao.markCloudOnlyIfVerified`, while unbacked `LOCAL_ONLY`/`FAILED` cache entries are pruned without ever touching user media files."
+
+### 24. Why is `ActiveUploadRegistry` modeled as `Authoritative` vs `Unavailable` instead of passing `Set<String>` directly?
+> "Passing a raw `Set<String>` defaults dangerously toward `emptySet()` when a scheduler isn't wired yet or when a `WorkManager` query fails or returns stale state—causing recovery to mistakenly interrupt live uploads. Modeling `ActiveUploadSnapshot` with `Unavailable(reason)` vs timestamp-checked `Authoritative(activeMediaIds, capturedAtMs)` ensures empty-set recovery only executes when a fresh, live worker-scheduler query positively confirms zero uploads are running."

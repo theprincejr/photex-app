@@ -124,3 +124,33 @@ During Phase 1 Increment 1B/1C dependency verification:
 - **Positive:** PhotX builds cleanly on `compileSdk 37.1` without changing `targetSdk = 36`; first-party control over TDLib commit pins, `OpenSSL 3.5.9 LTS`, 16 KB alignment, and passing `gh attestation verify`.
 - **Negative / Risks:** Initial TDLib release compilation takes ~22 minutes on GitHub Actions Ubuntu runners before `:core:telegram` can download and verify the resulting release zip.
 
+---
+
+## ADR-004: Gallery Domain Boundaries, Paging 3 Placement, and Media/Data Modules
+
+**Status:** Accepted  
+**Date:** 2026-11-26
+
+### Context
+
+Phase 2 Increment 2B introduces local MediaStore discovery, bounded-memory WebP thumbnail generation, Android 12–16 storage permission evaluation, and Room-backed timeline paging (`50,000+` target items). We must decide:
+1. Whether `androidx.paging.PagingData` belongs inside pure-Kotlin `:core:domain` contracts.
+2. How `:core:media` and `:core:data` divide Android framework operations from Room reconciliation while preserving zero-data-loss invariants.
+
+### Decision
+
+1. **Keep `PagingData` Outside `:core:domain`:**
+   - `:core:domain` remains pure Kotlin/JVM with **no** `androidx.paging` dependency, exposing `GalleryMediaItem`, `MediaPermissionState`, `GalleryReconcileSummary`, `GalleryRepository` (`observeTotalCount`, `observeThumbnailPendingCount`, `getMediaItem`, `reconcileLocalMedia`, `ensureThumbnail`), `ObserveGalleryTimelineUseCase` (reactive gallery snapshot / count observation for domain consumers), and `RefreshLocalMediaUseCase`.
+   - Room Paging 3 (`MediaDao.observeTimelinePagingSource()` → `Pager` → `Flow<PagingData<GalleryMediaItem>>`) lives at the **`:core:data` boundary** via `GalleryPagingRepository`, keeping Paging 3 (`LoadState`, `cachedIn(viewModelScope)`) decoupled from pure domain rules while giving Phase 2C `:feature:gallery` zero-overhead Room pagination.
+2. **Module Separation (`:core:media` vs `:core:data`):**
+   - `:core:media` owns Android `ContentResolver` / `MediaStore` scanning (`MediaStoreScanner`), `androidx.exifinterface:exifinterface:1.4.2` + `BitmapFactory` / `MediaMetadataRetriever` WebP thumbnail creation (`LocalThumbnailGenerator`), URI existence probing, and dynamic runtime permission inspection (`MediaPermissionChecker`). It has **no** dependency on `:core:database`.
+   - `:core:data` (`DefaultGalleryRepository`) orchestrates `:core:media` and `:core:database` (`MediaDao.upsertLocalMedia`, `updateLocalThumbPath`, `SyncStateDao.markCloudOnlyIfVerified`) using metadata diff checks to avoid redundant DB writes and thumbnail regenerations.
+3. **External Deletion vs Permission Guardrail:**
+   - Under `MediaPermissionState.Denied` or `MediaPermissionState.Partial` (`READ_MEDIA_VISUAL_USER_SELECTED`), missing items from MediaStore queries are **never** treated as deleted.
+   - Only under `MediaPermissionState.Full`, after an explicit `ContentResolver` disappearance probe confirms a tracked URI is truly gone, may `SYNCED` items with verified backup refs transition `SYNCED -> CLOUD_ONLY` via `SyncStateDao.markCloudOnlyIfVerified`, and unbacked `LOCAL_ONLY` index rows (never user files on disk) be pruned from the local cache.
+
+### Consequences
+
+- **Positive:** `:core:domain` remains framework-free and trivial to test; `Paging 3` works end-to-end from Room to future `:feature:gallery` without polluting domain models; partial photo permissions cannot silently wipe gallery records.
+- **Negative / Trade-offs:** Phase 2C `:feature:gallery` consumes both `:core:domain` use cases and `:core:data`'s `GalleryPagingRepository` (or a small paging interface).
+

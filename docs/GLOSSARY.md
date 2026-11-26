@@ -123,3 +123,23 @@ Every technical term is explained in three parts: **Simple Meaning**, **Technica
 - **Simple meaning:** Only updating the specific columns a screen/scanner owns (filename, dimensions), and only committing a status change if the row is still in the expected state when saved.
 - **Technical definition:** Narrow Room update projections (`LocalMediaPatch`) paired with conditional SQL (`WHERE id = :id AND sync_state = :expectedState`) that inspect affected-row counts (`changedRows == 1`) before reporting success.
 - **Use in PhotX:** Used in `MediaDao.upsertLocalMedia` (preventing MediaStore scans from overwriting `SYNCED`/`CLOUD_ONLY`) and `SyncStateDao.executeValidatedTransition` (`MediaStateMutationResult.StaleOrConcurrentModification` on `0`-row CAS).
+
+### MediaStore (`ContentResolver` Metadata Query)
+- **Simple meaning:** Android's shared catalog of photos and videos on the device, letting an app read filenames, dates, and dimensions without opening every huge image file.
+- **Technical definition:** Indexed Android content provider (`MediaStore.Images.Media`, `MediaStore.Video.Media`) queried via `ContentResolver.query` with column projections, MIME/folder selections (`RELATIVE_PATH` on API 29+, `DATA` on API 26–28), and `DATE_DESC` sorting.
+- **Use in PhotX:** Wrapped inside `AndroidMediaStoreScanner` (`:core:media`) to discover `DCIM/Camera` media cleanly off the main thread.
+
+### `inSampleSize` Subsampling & EXIF Orientation
+- **Simple meaning:** Decoding a camera photo at a smaller power-of-2 grid size first and applying its embedded rotation tag so sideways portraits appear upright without wasting phone RAM.
+- **Technical definition:** Two-pass `BitmapFactory` decoding (`inJustDecodeBounds = true` followed by power-of-two `inSampleSize`) combined with `ExifInterface` (`TAG_ORIENTATION`) `Matrix` rotation/flip before encoding `~320x320` WebP thumbnails atomically.
+- **Use in PhotX:** Implemented in `AndroidLocalThumbnailGenerator` (`:core:media`) targeting `filesDir/thumbnails/*.webp`.
+
+### `READ_MEDIA_VISUAL_USER_SELECTED` (Android 14+ Partial Access)
+- **Simple meaning:** Android's "Select photos and videos" permission where the user only reveals specific items, hiding all others from `MediaStore`.
+- **Technical definition:** Android API 34+ grant state (`MediaPermissionState.Partial`) where `READ_MEDIA_VISUAL_USER_SELECTED` is granted without full `READ_MEDIA_IMAGES`/`READ_MEDIA_VIDEO`.
+- **Use in PhotX:** Evaluated in `MediaPermissionChecker` (`:core:media`) and guarded in `DefaultGalleryRepository` (`:core:data`) so hidden photos under `Partial` access are never mistakenly marked `CLOUD_ONLY` or pruned from the gallery cache.
+
+### Authoritative Active-Worker Registry (`ActiveUploadRegistry`)
+- **Simple meaning:** A trusted live roll-call of which uploads are actually running right now, so a crash-recovery check never restarts an upload that is still in progress or assumes an empty list when the scheduler isn't ready.
+- **Technical definition:** Domain port returning either `ActiveUploadSnapshot.Unavailable` (scheduler absent/offline) or timestamped `ActiveUploadSnapshot.Authoritative(activeMediaIds, capturedAtMs)` validated for staleness before `SyncStateDao.recoverInterruptedUploads` transitions `UPLOADING -> FAILED`.
+- **Use in PhotX:** Prevents false interruption resets across Phase 2 (`Unavailable` default) and Phase 3 (`WorkManager`-backed live `WorkInfo` query).
