@@ -257,9 +257,20 @@ internal class AndroidLocalThumbnailGenerator(
             BitmapFactory.decodeStream(stream, null, decodeOptions)
         } ?: return Outcome.Failure(AppError.Io("Failed to decode subsampled image bitmap."))
 
-        val orientedBitmap = applyExifOrientation(sampledBitmap, orientation)
-        val finalBitmap = scaleToFitBounds(orientedBitmap, MAX_THUMB_DIMENSION_PX)
-        Outcome.Success(finalBitmap)
+        var workingBitmap: Bitmap? = sampledBitmap
+        try {
+            val oriented = applyExifOrientation(sampledBitmap, orientation)
+            workingBitmap = oriented
+            val finalBitmap = scaleToFitBounds(oriented, MAX_THUMB_DIMENSION_PX)
+            workingBitmap = finalBitmap
+            Outcome.Success(finalBitmap)
+        } catch (error: OutOfMemoryError) {
+            workingBitmap?.takeUnless { it.isRecycled }?.recycle()
+            Outcome.Failure(AppError.Io("Out of memory while scaling image thumbnail.", cause = error))
+        } catch (error: IllegalArgumentException) {
+            workingBitmap?.takeUnless { it.isRecycled }?.recycle()
+            Outcome.Failure(AppError.Io("Invalid image dimensions during thumbnail scaling.", cause = error))
+        }
     } catch (_: SecurityException) {
         Outcome.Failure(AppError.Unauthorized("Permission denied while opening image for thumbnailing."))
     } catch (error: IOException) {
@@ -270,8 +281,26 @@ internal class AndroidLocalThumbnailGenerator(
 
     private fun decodeVideoThumbnail(uri: Uri): Outcome<Bitmap, AppError> {
         val frame = videoFrameDecoder.decodeVideoFrame(context, uri, MAX_THUMB_DIMENSION_PX)
-            ?: return Outcome.Failure(AppError.Io("Unable to extract video frame thumbnail."))
-        return Outcome.Success(scaleToFitBounds(frame, MAX_THUMB_DIMENSION_PX))
+        return when {
+            frame == null -> Outcome.Failure(AppError.Io("Unable to extract video frame thumbnail."))
+
+            frame.isRecycled || frame.width <= 0 || frame.height <= 0 -> {
+                frame.takeUnless { it.isRecycled }?.recycle()
+                Outcome.Failure(AppError.Io("Extracted video frame has invalid dimensions."))
+            }
+
+            else -> scaleFrameSafely(frame)
+        }
+    }
+
+    private fun scaleFrameSafely(frame: Bitmap): Outcome<Bitmap, AppError> = try {
+        Outcome.Success(scaleToFitBounds(frame, MAX_THUMB_DIMENSION_PX))
+    } catch (error: OutOfMemoryError) {
+        frame.takeUnless { it.isRecycled }?.recycle()
+        Outcome.Failure(AppError.Io("Out of memory while scaling video thumbnail.", cause = error))
+    } catch (error: IllegalArgumentException) {
+        frame.takeUnless { it.isRecycled }?.recycle()
+        Outcome.Failure(AppError.Io("Invalid video frame dimensions during scaling.", cause = error))
     }
 
     private fun readExifOrientation(uri: Uri): Int = try {

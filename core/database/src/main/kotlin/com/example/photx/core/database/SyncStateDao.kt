@@ -144,17 +144,24 @@ public abstract class SyncStateDao {
 
     /**
      * Atomically validates and applies a [SyncState] transition through [SyncStateTransitionValidator].
+     *
+     * When [expectedFrom] is non-null, aborts with [MediaStateMutationResult.StaleOrConcurrentModification]
+     * if the row's persisted state already moved concurrently.
      */
     @Transaction
-    public open suspend fun transitionSyncState(id: String, targetState: SyncState): MediaStateMutationResult =
-        executeValidatedTransition(
-            id = id,
-            targetState = targetState,
-            getSnapshot = ::getSyncSnapshot,
-            performCas = { current ->
-                compareAndSwapSyncState(id = id, expectedState = current.syncState, nextState = targetState)
-            }
-        )
+    public open suspend fun transitionSyncState(
+        id: String,
+        targetState: SyncState,
+        expectedFrom: SyncState? = null
+    ): MediaStateMutationResult = executeValidatedTransition(
+        id = id,
+        targetState = targetState,
+        expectedFrom = expectedFrom,
+        getSnapshot = ::getSyncSnapshot,
+        performCas = { current ->
+            compareAndSwapSyncState(id = id, expectedState = current.syncState, nextState = targetState)
+        }
+    )
 
     /**
      * Atomically validates the transition to [SyncState.SYNCED], enforces canonical SHA-256
@@ -244,10 +251,14 @@ public abstract class SyncStateDao {
         val staleIds = findIdsBySyncState(SyncState.UPLOADING).filter { it !in activeUploadIds }
         var recoveredCount = 0
         staleIds.forEach { id ->
-            val failedOutcome = transitionSyncState(id = id, targetState = SyncState.FAILED)
+            val failedOutcome = transitionSyncState(
+                id = id,
+                targetState = SyncState.FAILED,
+                expectedFrom = SyncState.UPLOADING
+            )
             if (failedOutcome is MediaStateMutationResult.Applied) {
                 if (requeue) {
-                    transitionSyncState(id = id, targetState = SyncState.QUEUED)
+                    transitionSyncState(id = id, targetState = SyncState.QUEUED, expectedFrom = SyncState.FAILED)
                 }
                 recoveredCount += 1
             }
@@ -266,14 +277,46 @@ public abstract class SyncStateDao {
     }
 }
 
+@Suppress("LongParameterList")
 internal suspend fun executeValidatedTransition(
     id: String,
     targetState: SyncState,
+    expectedFrom: SyncState? = null,
     getSnapshot: suspend (String) -> MediaSyncSnapshot?,
     preCheck: suspend (MediaSyncSnapshot) -> MediaStateMutationResult? = { null },
     performCas: suspend (MediaSyncSnapshot) -> Int
 ): MediaStateMutationResult {
-    val current = getSnapshot(id) ?: return MediaStateMutationResult.NotFound(id)
+    val current = getSnapshot(id)
+    return when {
+        current == null -> MediaStateMutationResult.NotFound(id)
+
+        expectedFrom != null && current.syncState != expectedFrom ->
+            MediaStateMutationResult.StaleOrConcurrentModification(
+                itemId = id,
+                expectedState = expectedFrom,
+                actualState = current.syncState
+            )
+
+        else -> applyValidatedSnapshotTransition(
+            id = id,
+            current = current,
+            targetState = targetState,
+            getSnapshot = getSnapshot,
+            preCheck = preCheck,
+            performCas = performCas
+        )
+    }
+}
+
+@Suppress("LongParameterList")
+private suspend fun applyValidatedSnapshotTransition(
+    id: String,
+    current: MediaSyncSnapshot,
+    targetState: SyncState,
+    getSnapshot: suspend (String) -> MediaSyncSnapshot?,
+    preCheck: suspend (MediaSyncSnapshot) -> MediaStateMutationResult?,
+    performCas: suspend (MediaSyncSnapshot) -> Int
+): MediaStateMutationResult {
     val validation = SyncStateTransitionValidator.validate(from = current.syncState, to = targetState)
     val preCheckFailure = if (validation is SyncStateTransitionResult.Allowed) preCheck(current) else null
 

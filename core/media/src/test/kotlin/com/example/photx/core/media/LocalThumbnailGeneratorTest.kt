@@ -259,6 +259,70 @@ class LocalThumbnailGeneratorTest {
     }
 
     @Test
+    fun `given api26 bounded thumb scaling and errors_when generating_then recycles and guards`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val dispatchers = testDispatchers(testScheduler)
+        var retrieverCalls = 0
+
+        val sourceFrame = Bitmap.createBitmap(512, 384, Bitmap.Config.ARGB_8888)
+        val okApi26Gen = AndroidLocalThumbnailGenerator(
+            context = context,
+            dispatcherProvider = dispatchers,
+            videoFrameDecoder = AndroidVideoFrameDecoder(
+                sdkIntProvider = { Build.VERSION_CODES.O },
+                legacyMediaStoreThumb = { _, _ -> sourceFrame },
+                retrieverFactory = {
+                    retrieverCalls += 1
+                    error("Must never use MediaMetadataRetriever on API 26!")
+                }
+            )
+        )
+        val api26Thumb = okApi26Gen.generateThumbnail(
+            itemId = "api26-ok",
+            sourceUri = "content://media/external/video/media/77",
+            mediaType = MediaType.VIDEO
+        ) as Outcome.Success
+        assertTrue(sourceFrame.isRecycled)
+        val api26Bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(api26Thumb.value, api26Bounds)
+        assertEquals(320, api26Bounds.outWidth)
+        assertEquals(240, api26Bounds.outHeight)
+
+        val throwingApi26Gen = AndroidLocalThumbnailGenerator(
+            context = context,
+            dispatcherProvider = dispatchers,
+            videoFrameDecoder = AndroidVideoFrameDecoder(
+                sdkIntProvider = { Build.VERSION_CODES.O },
+                legacyMediaStoreThumb = { _, _ -> throw SecurityException("Denied") },
+                retrieverFactory = {
+                    retrieverCalls += 1
+                    error("Must never use MediaMetadataRetriever on API 26!")
+                }
+            )
+        )
+        val existing = throwingApi26Gen.thumbnailFileFor("api26-missing").apply {
+            parentFile?.mkdirs()
+            writeBytes(byteArrayOf(5, 6, 7))
+        }
+        assertTrue(
+            throwingApi26Gen.generateThumbnail(
+                itemId = "api26-nonnum",
+                sourceUri = "content://com.example.photx.testmedia/video.mp4",
+                mediaType = MediaType.VIDEO
+            ) is Outcome.Failure
+        )
+        assertTrue(
+            throwingApi26Gen.generateThumbnail(
+                itemId = "api26-missing",
+                sourceUri = "content://media/external/video/media/88",
+                mediaType = MediaType.VIDEO
+            ) is Outcome.Failure
+        )
+        assertEquals(0, retrieverCalls)
+        assertEquals(listOf(5.toByte(), 6.toByte(), 7.toByte()), existing.readBytes().toList())
+    }
+
+    @Test
     fun `given api27 plus video decoder_when succeeding or failing_then releases retriever cleanly`() = runTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val dispatchers = testDispatchers(testScheduler)

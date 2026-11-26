@@ -548,6 +548,37 @@ class MediaDaoTest {
         assertEquals(1, recovered)
         assertEquals(SyncState.QUEUED, mediaDao.getById("stuck-1")?.syncState)
         assertEquals(SyncState.UPLOADING, mediaDao.getById("active-1")?.syncState)
+        assertEquals(0, syncStateDao.recoverInterruptedUploads(activeUploadIds = setOf("active-1"), requeue = true))
+    }
+
+    @Test
+    fun `given expectedFrom guard and queued failure_when transitioning_then enforces atomic cas`() = runTest {
+        mediaDao.upsertLocalMedia(localDiscovery(id = "q-atomic", localUri = "content://q/atomic", takenAt = 1L))
+        mediaDao.upsertLocalMedia(localDiscovery(id = "u-live", localUri = "content://u/live", takenAt = 2L))
+        syncStateDao.transitionSyncState("q-atomic", SyncState.QUEUED)
+        syncStateDao.transitionSyncState("u-live", SyncState.QUEUED)
+        syncStateDao.transitionSyncState("u-live", SyncState.UPLOADING)
+
+        val staleQueuedFail = syncStateDao.transitionSyncState(
+            id = "u-live",
+            targetState = SyncState.FAILED,
+            expectedFrom = SyncState.QUEUED
+        )
+        assertEquals(
+            MediaStateMutationResult.StaleOrConcurrentModification(
+                itemId = "u-live",
+                expectedState = SyncState.QUEUED,
+                actualState = SyncState.UPLOADING
+            ),
+            staleQueuedFail
+        )
+        assertEquals(SyncState.UPLOADING, mediaDao.getById("u-live")?.syncState)
+
+        assertEquals(
+            MediaStateMutationResult.Applied(SyncState.QUEUED, SyncState.FAILED),
+            syncStateDao.transitionSyncState("q-atomic", SyncState.FAILED, expectedFrom = SyncState.QUEUED)
+        )
+        assertEquals(SyncState.FAILED, mediaDao.getById("q-atomic")?.syncState)
     }
 
     private suspend fun promoteToSynced(

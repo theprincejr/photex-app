@@ -9,6 +9,7 @@ class SyncStateTest {
     fun `given valid transitions_when checking canTransitionTo_then returns true`() {
         assertTrue(SyncState.LOCAL_ONLY.canTransitionTo(SyncState.QUEUED))
         assertTrue(SyncState.QUEUED.canTransitionTo(SyncState.UPLOADING))
+        assertTrue(SyncState.QUEUED.canTransitionTo(SyncState.FAILED))
         assertTrue(SyncState.UPLOADING.canTransitionTo(SyncState.SYNCED))
         assertTrue(SyncState.UPLOADING.canTransitionTo(SyncState.FAILED))
         assertTrue(SyncState.FAILED.canTransitionTo(SyncState.QUEUED))

@@ -31,7 +31,7 @@ public enum class SyncState {
      */
     public fun allowedNextStates(): Set<SyncState> = when (this) {
         LOCAL_ONLY -> setOf(QUEUED)
-        QUEUED -> setOf(UPLOADING)
+        QUEUED -> setOf(UPLOADING, FAILED)
         UPLOADING -> setOf(SYNCED, FAILED)
         SYNCED -> setOf(CLOUD_ONLY)
         CLOUD_ONLY -> setOf(SYNCED, FAILED)

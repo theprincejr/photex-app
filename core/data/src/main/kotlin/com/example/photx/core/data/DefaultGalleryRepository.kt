@@ -315,16 +315,21 @@ internal class DefaultGalleryRepository(
                 }
 
                 SyncState.QUEUED -> {
-                    val toUploading = syncStateDao.transitionSyncState(missing.id, SyncState.UPLOADING)
-                    if (toUploading is MediaStateMutationResult.Applied) {
-                        syncStateDao.transitionSyncState(missing.id, SyncState.FAILED)
-                    }
+                    syncStateDao.transitionSyncState(
+                        id = missing.id,
+                        targetState = SyncState.FAILED,
+                        expectedFrom = SyncState.QUEUED
+                    )
                 }
 
                 SyncState.UPLOADING -> {
                     val activeSet = (authoritativeActiveIds as? Outcome.Success)?.value
                     if (activeSet != null && missing.id !in activeSet) {
-                        syncStateDao.transitionSyncState(missing.id, SyncState.FAILED)
+                        syncStateDao.transitionSyncState(
+                            id = missing.id,
+                            targetState = SyncState.FAILED,
+                            expectedFrom = SyncState.UPLOADING
+                        )
                     }
                 }
 

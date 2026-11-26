@@ -80,9 +80,9 @@ TDLib / MediaStore ──> Data Sources ──> Repository Impl ──> Room DB 
 
 ```text
 LOCAL_ONLY ──> QUEUED ──> UPLOADING ──> SYNCED ──> CLOUD_ONLY
-                 ^            │                        │
-                 │            v                        v
-                 └───────── FAILED <───────────────────┘
+                 │ ^          │                        │
+                 │ │          v                        v
+                 └─┴───────> FAILED <──────────────────┘
                                   (and CLOUD_ONLY ──> SYNCED on restore)
 ```
 

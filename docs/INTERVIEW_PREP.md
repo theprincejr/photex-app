@@ -47,7 +47,7 @@ Cumulative interview questions grounded in PhotX's **actual implemented code and
 ## Testing & Verification
 
 ### 9. Why test the full 36-case matrix in `SyncStateTransitionValidatorTest` instead of just a few sample transitions?
-> "Testing only a few examples misses silent regressions when someone adds a new enum entry or edits `allowedNextStates()`. Iterating over every `(from, to)` pair in `SyncState.entries` (`6 × 6 = 36` combinations) proves both that all `8` spec-allowed moves succeed and that all `28` disallowed moves—including self-transitions and unsafe jumps like `LOCAL_ONLY -> CLOUD_ONLY`—fail with accurate diagnostic payloads."
+> "Testing only a few examples misses silent regressions when someone adds a new enum entry or edits `allowedNextStates()`. Iterating over every `(from, to)` pair in `SyncState.entries` (`6 × 6 = 36` combinations) proves both that all `9` allowed moves (the 8 core spec moves plus direct `QUEUED -> FAILED` when source media disappears) succeed and that all `27` disallowed moves—including self-transitions and unsafe jumps like `LOCAL_ONLY -> CLOUD_ONLY`—fail with accurate diagnostic payloads."
 
 ---
 

@@ -469,6 +469,12 @@ class DefaultGalleryRepositoryTest {
         assertEquals(1, recovered.value)
         assertEquals(SyncState.UPLOADING, repo.getMediaById(idActive)?.syncState)
         assertEquals(SyncState.QUEUED, repo.getMediaById(idStuck)?.syncState)
+
+        // Idempotent second recovery call finds zero remaining interrupted uploads.
+        val secondRecover = repo.recoverInterruptedUploads(requeue = true) as Outcome.Success
+        assertEquals(0, secondRecover.value)
+        assertEquals(SyncState.UPLOADING, repo.getMediaById(idActive)?.syncState)
+        assertEquals(SyncState.QUEUED, repo.getMediaById(idStuck)?.syncState)
     }
 
     private suspend fun promoteToSynced(
