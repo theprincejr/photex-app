@@ -54,7 +54,8 @@ internal class DefaultGalleryRepository(
         mediaDao.getById(id)?.toDomain()
     }
 
-    override fun evaluatePermissionState(): MediaPermissionState = mediaServices.permissionChecker.checkPermissionState()
+    override fun evaluatePermissionState(): MediaPermissionState =
+        mediaServices.permissionChecker.checkPermissionState()
 
     override suspend fun refreshLocalMedia(scope: MediaScanScope): Outcome<GalleryReconcileSummary, AppError> =
         reconcileMutex.withLock {
@@ -91,7 +92,13 @@ internal class DefaultGalleryRepository(
                     AppError.Io("Local original URI is unavailable for item '$id' (${existing.syncState}).")
                 )
 
-            when (val generated = mediaServices.thumbnailGenerator.generateThumbnail(id, sourceUri, existing.mediaType)) {
+            when (
+                val generated = mediaServices.thumbnailGenerator.generateThumbnail(
+                    id,
+                    sourceUri,
+                    existing.mediaType
+                )
+            ) {
                 is Outcome.Failure -> generated
 
                 is Outcome.Success -> {
@@ -245,7 +252,11 @@ internal class DefaultGalleryRepository(
                 resolvedId = existing?.id ?: stableMediaIdForUri(scanned.localUri)
             }
 
-            if (needsThumbnailGeneration(activeSnapshot, metadataChanged = !unchangedMetadata && reboundSnapshot == null)) {
+            if (needsThumbnailGeneration(
+                    activeSnapshot,
+                    metadataChanged = !unchangedMetadata && reboundSnapshot == null
+                )
+            ) {
                 thumbRequests += ThumbnailWorkItem(
                     itemId = resolvedId,
                     sourceUri = scanned.localUri,
