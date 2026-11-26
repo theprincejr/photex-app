@@ -109,3 +109,20 @@ Cumulative interview questions grounded in PhotX's **actual implemented code and
 
 ### 24. Why is `ActiveUploadRegistry` modeled as `Authoritative` vs `Unavailable` instead of passing `Set<String>` directly?
 > "Passing a raw `Set<String>` defaults dangerously toward `emptySet()` when a scheduler isn't wired yet or when a `WorkManager` query fails or returns stale state—causing recovery to mistakenly interrupt live uploads. Modeling `ActiveUploadSnapshot` with `Unavailable(reason)` vs timestamp-checked `Authoritative(activeMediaIds, capturedAtMs)` ensures empty-set recovery only executes when a fresh, live worker-scheduler query positively confirms zero uploads are running."
+
+---
+
+## Design System & Compose Tokens (`:core:designsystem`)
+
+### 25. Why isolate `:core:designsystem` from `:core:ui` and disable Material You dynamic colors in `PhotxTheme`?
+> "`:core:designsystem` holds pure visual tokens (`ColorScheme`, `Typography`, `Shapes`, `PhotxSpacing`, `PhotxRadii`, `PhotxSyncColors`, `PhotxGlassTokens`) with zero dependency on `:core:domain`, `:core:data`, or stateful UI widgets—so any feature module (`:feature:auth`, `:feature:gallery`, `:feature:viewer`) or `:core:ui` can consume consistent tokens without circular dependencies. PhotX disables `dynamicDarkColorScheme`/`dynamicLightColorScheme` intentionally because the approved Botanical Orchid identity relies on OLED-true `#000000` / `#FFFFFF` backgrounds, `#C77DFF` / `#8228C8` orchid accents, and high-contrast semantic `SyncState` badges that wallpaper-derived palettes would dilute or break."
+
+### 26. How do you extend Material 3 with custom domain tokens (`PhotxSyncColors`, `PhotxSpacing`, `PhotxGlassTokens`) and verify accessibility in CI?
+> "Material 3's `ColorScheme` only models generic roles (`primary`, `surface`, `error`) and lacks slots for spacing, glass pill borders, or PhotX's 6 `SyncState` badges (`LOCAL_ONLY`, `QUEUED`, `UPLOADING`, `SYNCED`, `CLOUD_ONLY`, `FAILED`). `PhotxTheme` binds custom immutable token objects via `staticCompositionLocalOf` and exposes them cleanly through the `PhotxTheme` object (`PhotxTheme.syncColors.forState(state)`, `PhotxTheme.spacing`, `PhotxTheme.glass`) while delegating standard Material slots to `MaterialTheme`. In JVM unit tests (`PhotxDesignSystemTokensTest`), we compute relative luminance and assert `>= 4.5f` WCAG AA contrast across every foreground/background and sync-badge pair in both dark and light themes."
+
+---
+
+## Gallery Grid, Viewer & Navigation (`:core:ui`, `:feature:gallery`, `:feature:viewer`, `:app`)
+
+### 27. How does PhotX render thousands of local photos smoothly in a 4-column chronological grid without decoding full-resolution bitmaps?
+> "Room emits a SQLite-backed `PagingSource` (`pageSize = 60`, `prefetchDistance = 30`) via `:core:data`'s `GalleryPagingRepository`. `:feature:gallery`'s `GalleryViewModel` inserts chronological `DateHeader` separators via `PagingData.insertSeparators` and caches the stream in `viewModelScope`. `PhotosScreen` renders `LazyVerticalGrid` (`GridCells.Fixed(4)`, `2.dp` gutters) using `itemKey` and `itemContentType`, where `PhotxPhotoThumbnailTile` passes **only** the `~320x320` WebP `localThumbPath` to Coil 3 (`AsyncImage`), reserving full-resolution `localUri` decoding strictly for `MediaViewerScreen`."

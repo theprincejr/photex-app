@@ -19,6 +19,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,11 +34,22 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
  * Hilt-connected route entry point for [AuthScreen].
  */
 @Composable
-public fun AuthRoute(modifier: Modifier = Modifier, viewModel: AuthViewModel = hiltViewModel()) {
+public fun AuthRoute(
+    modifier: Modifier = Modifier,
+    onAuthenticated: () -> Unit = {},
+    onBrowseOffline: (() -> Unit)? = null,
+    viewModel: AuthViewModel = hiltViewModel()
+) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    LaunchedEffect(uiState.step) {
+        if (uiState.step == AuthStep.AUTHENTICATED) {
+            onAuthenticated()
+        }
+    }
     AuthScreen(
         uiState = uiState,
         onEvent = viewModel::onEvent,
+        onBrowseOffline = onBrowseOffline,
         modifier = modifier
     )
 }
@@ -46,7 +58,12 @@ public fun AuthRoute(modifier: Modifier = Modifier, viewModel: AuthViewModel = h
  * Stateless Material 3 authentication screen rendering phone, OTP, 2FA password, and status steps.
  */
 @Composable
-public fun AuthScreen(uiState: AuthUiState, onEvent: (AuthUiEvent) -> Unit, modifier: Modifier = Modifier) {
+public fun AuthScreen(
+    uiState: AuthUiState,
+    onEvent: (AuthUiEvent) -> Unit,
+    modifier: Modifier = Modifier,
+    onBrowseOffline: (() -> Unit)? = null
+) {
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -75,6 +92,13 @@ public fun AuthScreen(uiState: AuthUiState, onEvent: (AuthUiEvent) -> Unit, modi
         }
 
         AuthStepContent(uiState = uiState, onEvent = onEvent)
+
+        if (onBrowseOffline != null && uiState.step != AuthStep.AUTHENTICATED) {
+            Spacer(modifier = Modifier.height(16.dp))
+            TextButton(onClick = onBrowseOffline) {
+                Text(text = "Browse Local Photos")
+            }
+        }
     }
 }
 

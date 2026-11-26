@@ -143,3 +143,28 @@ Every technical term is explained in three parts: **Simple Meaning**, **Technica
 - **Simple meaning:** A trusted live roll-call of which uploads are actually running right now, so a crash-recovery check never restarts an upload that is still in progress or assumes an empty list when the scheduler isn't ready.
 - **Technical definition:** Domain port returning either `ActiveUploadSnapshot.Unavailable` (scheduler absent/offline) or timestamped `ActiveUploadSnapshot.Authoritative(activeMediaIds, capturedAtMs)` validated for staleness before `SyncStateDao.recoverInterruptedUploads` transitions `UPLOADING -> FAILED`.
 - **Use in PhotX:** Prevents false interruption resets across Phase 2 (`Unavailable` default) and Phase 3 (`WorkManager`-backed live `WorkInfo` query).
+
+### Design System & Design Tokens (`:core:designsystem`)
+- **Simple meaning:** A single shared stylebook of colors, fonts, spacing, and corner radii so every PhotX screen looks consistent without copying hex codes or `dp` numbers across features.
+- **Technical definition:** A UI foundation module exposing immutable Material 3 `ColorScheme`, `Typography`, `Shapes`, and custom token classes (`PhotxSpacing`, `PhotxRadii`, `PhotxSyncColors`, `PhotxGlassTokens`) through a root `PhotxTheme` composable.
+- **Use in PhotX:** Defines the approved Botanical Orchid Obsidian Dark (`#000000`/`#15101F`/`#C77DFF`) and Pure Light (`#FFFFFF`/`#F5F2F8`/`#8228C8`) palettes without device dynamic-color overrides.
+
+### `CompositionLocal` (`staticCompositionLocalOf`)
+- **Simple meaning:** A scoped backpack attached to the Compose UI tree so any child screen or badge can read theme tokens without passing them through every function parameter.
+- **Technical definition:** Jetpack Compose's implicit tree-scoped provider (`staticCompositionLocalOf`) for rarely changing configuration objects (such as spacing, radii, and semantic sync colors) that avoids per-read snapshot tracking overhead.
+- **Use in PhotX:** Powers `PhotxTheme.syncColors`, `PhotxTheme.glass`, `PhotxTheme.spacing`, and `PhotxTheme.radii` alongside Material 3's `MaterialTheme`.
+
+### WCAG AA Contrast Ratio
+- **Simple meaning:** A measurable brightness difference between foreground text/icons and their background so labels stay readable in sunlight and dark rooms.
+- **Technical definition:** Relative luminance ratio `(L1 + 0.05) / (L2 + 0.05)` defined by Web Content Accessibility Guidelines, requiring `>= 4.5:1` for normal body/label text against its container surface.
+- **Use in PhotX:** Automatically asserted in `PhotxDesignSystemTokensTest` across primary, surface, error, and all 6 `SyncState` badge pairs in both dark and light themes.
+
+### `PagingData.insertSeparators` & `GridItemSpan(maxLineSpan)`
+- **Simple meaning:** Inserting section titles (`Today`, `Yesterday`) on the fly between paged photos so headers span the full width of a 4-column grid.
+- **Technical definition:** Paging 3 stream transformation (`insertSeparators`) mapping `GalleryMediaItem` pairs into a sealed `GalleryTimelineUiModel` (`DateHeader` vs `MediaItem`) paired with `LazyVerticalGrid` `span = { GridItemSpan(maxLineSpan) }` for headers.
+- **Use in PhotX:** Implemented in `GalleryViewModel` and `PhotosScreen` (`:feature:gallery`).
+
+### Edge-to-Edge Window (`NoActionBar` + `enableEdgeToEdge()`)
+- **Simple meaning:** Removing Android's legacy top title bar so Jetpack Compose draws cleanly behind status and navigation bars using `statusBarsPadding()` and `navigationBarsPadding()`.
+- **Technical definition:** Configuring `android:Theme.Material.NoActionBar` in `themes.xml` alongside `ComponentActivity.enableEdgeToEdge()` so `PhotxTheme` owns all chrome.
+- **Use in PhotX:** Configured in `app/src/main/res/values/themes.xml` and `MainActivity.kt`.
