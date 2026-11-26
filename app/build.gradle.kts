@@ -23,12 +23,17 @@ android {
 dependencies {
     implementation(projects.core.common)
     implementation(projects.core.data)
+    implementation(projects.core.designsystem)
     implementation(projects.core.domain)
     implementation(projects.core.model)
     implementation(projects.core.telegram)
+    implementation(projects.core.ui)
     implementation(projects.feature.auth)
+    implementation(projects.feature.gallery)
+    implementation(projects.feature.viewer)
 
     implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.navigation.compose)
 
     testImplementation(libs.junit)
 }

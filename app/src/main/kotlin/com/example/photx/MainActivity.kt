@@ -4,12 +4,14 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.safeDrawingPadding
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.Surface
-import androidx.compose.ui.Modifier
-import com.example.photx.feature.auth.AuthRoute
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import com.example.photx.core.designsystem.PhotxTheme
+import com.example.photx.navigation.PhotxAppShell
 import dagger.hilt.android.AndroidEntryPoint
 
 /**
@@ -21,13 +23,14 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContent {
-            MaterialTheme {
-                Surface(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .safeDrawingPadding()
-                ) {
-                    AuthRoute()
+            val systemDark = isSystemInDarkTheme()
+            var isDarkTheme by rememberSaveable(systemDark) { mutableStateOf(systemDark) }
+            PhotxTheme(darkTheme = isDarkTheme) {
+                Surface(color = PhotxTheme.colorScheme.background) {
+                    PhotxAppShell(
+                        isDarkTheme = isDarkTheme,
+                        onToggleTheme = { isDarkTheme = !isDarkTheme }
+                    )
                 }
             }
         }
