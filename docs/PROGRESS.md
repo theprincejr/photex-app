@@ -1,12 +1,12 @@
 # PhotX Project Progress
 
-## Current Milestone: Phase 2 Increment 2B Merged (`1e14499`, `69/69`); Post-Merge Hardening PR Open (`71/71`; Next: Phase 2C UI)
+## Current Milestone: Phase 2 Increment 2B & Post-Merge Hardening Merged (`2331a39`, `71/71` Tests; Next: Phase 2C UI)
 
 | Phase | Target Version | Status | Summary |
 |---|---|---|---|
 | **Phase 0 — Repository Bootstrap** | `v0.1.0-bootstrap` | **Complete (`ADR-001`, `ADR-002` Accepted)** | `:app`, `:core:common`, `:core:model`, `build-logic`, `SyncStateTransitionValidator`, CI, docs |
 | **Phase 1 — Foundation & TDLib Auth** | `v0.1.0` | **Complete (`ADR-003` + Live Emulator Smoke-Tested)** | First-party `tdlib-1.8.70-c8828d5`, `:core:domain`, `:core:telegram`, `:feature:auth`; live phone/OTP/2FA + cold-restart session persistence verified on `PhotX_API_36_x86_64` |
-| **Phase 2 — Local Gallery & Paging 3** | `v0.2.0` | **In Progress (2A, 2A.1 & 2B Merged; 2B Post-Merge Hardening PR Open)** | **2A & 2A.1 (`:core:database`) Complete & Merged (`PR #3`, `8839a6c`).** **2B Merged (`PR #4`, `1e14499`, `69/69` tests):** Pure `:core:domain` gallery contracts (`ActiveUploadRegistry`), `:core:media`, `:core:data`, plus finalized Phase 2C blueprint (`GALLERY_DESIGN_BLUEPRINT.md`). **2B Post-Merge Hardening (`fix/phase2b-post-merge-hardening`):** Outer `OutOfMemoryError` & safe `isRecycled` bitmap cleanup in `LocalThumbnailGenerator`, `.kotlin/` gitignore exclusion, WAL `QUEUED -> UPLOADING` vs stale `QUEUED -> FAILED` race, recycled/OOM video frame, and active-upload missing-URI tests (`71/71` total across 9 modules). **Next:** Phase 2C (`:feature:gallery` UI) |
+| **Phase 2 — Local Gallery & Paging 3** | `v0.2.0` | **Complete & Merged (`PR #3`, `PR #4`, `PR #5`)** | **2A & 2A.1 (`:core:database`) Merged (`PR #3`, `8839a6c`).** **2B (`ADR-004`, `:core:media` + `:core:data`) Merged (`PR #4`, `1e14499`).** **2B Post-Merge Hardening Merged (`PR #5`, `2331a39`):** Outer `OutOfMemoryError` & safe `isRecycled` bitmap cleanup in `LocalThumbnailGenerator`, `.kotlin/` gitignore exclusion, WAL `QUEUED -> UPLOADING` vs stale `QUEUED -> FAILED` race, recycled/OOM video frame, and active-upload missing-URI tests (`71/71` total across 18 suites / 9 modules). **Next:** Phase 2C (`:core:designsystem` & Gallery UI) |
 | **Phase 3 — Sequential Auto-Backup** | `v0.3.0` | Not Started | SHA-256 deduplication, persistent single-upload WorkManager queue, `#photx` upload + correlation |
 | **Phase 4 — Remote Thumbnails & Recovery** | `v0.4.0` | Not Started | Coil 3 TDLib fetcher, Saved Messages scanner, fresh-install Room index reconstruction |
 | **Phase 5 — Streaming, Restore & Free Up Space** | `v0.5.0` | Not Started | Media3 cloud playback PoC/implementation, SHA-256-verified restore, zero-data-loss deletion |
