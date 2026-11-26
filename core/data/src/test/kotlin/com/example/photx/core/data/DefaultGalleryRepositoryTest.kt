@@ -475,6 +475,16 @@ class DefaultGalleryRepositoryTest {
         assertEquals(0, secondRecover.value)
         assertEquals(SyncState.UPLOADING, repo.getMediaById(idActive)?.syncState)
         assertEquals(SyncState.QUEUED, repo.getMediaById(idStuck)?.syncState)
+
+        // Missing URI on an actively-uploading record must NEVER fail the live upload.
+        harness.uriStatuses[uriActive] = MediaUriStatus.CONFIRMED_MISSING
+        harness.scannedItems = emptyList()
+        harness.activeUploadSnapshot = ActiveUploadSnapshot.Authoritative(
+            activeMediaIds = setOf(idActive),
+            capturedAtMs = harness.nowMs
+        )
+        repo.refreshLocalMedia()
+        assertEquals(SyncState.UPLOADING, repo.getMediaById(idActive)?.syncState)
     }
 
     private suspend fun promoteToSynced(

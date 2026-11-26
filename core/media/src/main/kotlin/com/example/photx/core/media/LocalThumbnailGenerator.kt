@@ -232,17 +232,33 @@ internal class AndroidLocalThumbnailGenerator(
     }
 
     private fun decodeImageThumbnail(uri: Uri): Outcome<Bitmap, AppError> = try {
+        val bounds = decodeImageBounds(uri)
+        when {
+            bounds == null -> Outcome.Failure(AppError.Io("Unable to open image stream for thumbnail generation."))
+
+            bounds.outWidth <= 0 || bounds.outHeight <= 0 ->
+                Outcome.Failure(AppError.Io("Image stream is corrupted or has invalid dimensions."))
+
+            else -> decodeAndTransformImage(uri, bounds)
+        }
+    } catch (_: SecurityException) {
+        Outcome.Failure(AppError.Unauthorized("Permission denied while opening image for thumbnailing."))
+    } catch (error: IOException) {
+        Outcome.Failure(AppError.Io("I/O error while reading image stream for thumbnailing.", cause = error))
+    } catch (error: OutOfMemoryError) {
+        Outcome.Failure(AppError.Io("Out of memory while decoding image thumbnail.", cause = error))
+    } catch (error: IllegalArgumentException) {
+        Outcome.Failure(AppError.Io("Malformed image URI or decode parameters.", cause = error))
+    }
+
+    private fun decodeImageBounds(uri: Uri): BitmapFactory.Options? {
         val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-        val boundsStream = context.contentResolver.openInputStream(uri)
-            ?: return Outcome.Failure(AppError.Io("Unable to open image stream for thumbnail generation."))
-        boundsStream.use { stream ->
-            BitmapFactory.decodeStream(stream, null, bounds)
-        }
+        val stream = context.contentResolver.openInputStream(uri) ?: return null
+        stream.use { BitmapFactory.decodeStream(it, null, bounds) }
+        return bounds
+    }
 
-        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) {
-            return Outcome.Failure(AppError.Io("Image stream is corrupted or has invalid dimensions."))
-        }
-
+    private fun decodeAndTransformImage(uri: Uri, bounds: BitmapFactory.Options): Outcome<Bitmap, AppError> {
         val sampleSize = calculateInSampleSize(
             sourceWidth = bounds.outWidth,
             sourceHeight = bounds.outHeight,
@@ -258,7 +274,7 @@ internal class AndroidLocalThumbnailGenerator(
         } ?: return Outcome.Failure(AppError.Io("Failed to decode subsampled image bitmap."))
 
         var workingBitmap: Bitmap? = sampledBitmap
-        try {
+        return try {
             val oriented = applyExifOrientation(sampledBitmap, orientation)
             workingBitmap = oriented
             val finalBitmap = scaleToFitBounds(oriented, MAX_THUMB_DIMENSION_PX)
@@ -271,12 +287,6 @@ internal class AndroidLocalThumbnailGenerator(
             workingBitmap?.takeUnless { it.isRecycled }?.recycle()
             Outcome.Failure(AppError.Io("Invalid image dimensions during thumbnail scaling.", cause = error))
         }
-    } catch (_: SecurityException) {
-        Outcome.Failure(AppError.Unauthorized("Permission denied while opening image for thumbnailing."))
-    } catch (error: IOException) {
-        Outcome.Failure(AppError.Io("I/O error while reading image stream for thumbnailing.", cause = error))
-    } catch (error: IllegalArgumentException) {
-        Outcome.Failure(AppError.Io("Malformed image URI or decode parameters.", cause = error))
     }
 
     private fun decodeVideoThumbnail(uri: Uri): Outcome<Bitmap, AppError> {
@@ -289,18 +299,8 @@ internal class AndroidLocalThumbnailGenerator(
                 Outcome.Failure(AppError.Io("Extracted video frame has invalid dimensions."))
             }
 
-            else -> scaleFrameSafely(frame)
+            else -> scaleFrameSafely(frame, MAX_THUMB_DIMENSION_PX)
         }
-    }
-
-    private fun scaleFrameSafely(frame: Bitmap): Outcome<Bitmap, AppError> = try {
-        Outcome.Success(scaleToFitBounds(frame, MAX_THUMB_DIMENSION_PX))
-    } catch (error: OutOfMemoryError) {
-        frame.takeUnless { it.isRecycled }?.recycle()
-        Outcome.Failure(AppError.Io("Out of memory while scaling video thumbnail.", cause = error))
-    } catch (error: IllegalArgumentException) {
-        frame.takeUnless { it.isRecycled }?.recycle()
-        Outcome.Failure(AppError.Io("Invalid video frame dimensions during scaling.", cause = error))
     }
 
     private fun readExifOrientation(uri: Uri): Int = try {
@@ -316,35 +316,10 @@ internal class AndroidLocalThumbnailGenerator(
         ExifInterface.ORIENTATION_NORMAL
     }
 
-    private fun applyExifOrientation(source: Bitmap, orientation: Int): Bitmap {
-        val matrix = computeExifMatrix(orientation) ?: return source
-        val transformed = Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
-        if (transformed !== source) {
-            source.recycle()
-        }
-        return transformed
-    }
-
-    private fun scaleToFitBounds(source: Bitmap, maxDimensionPx: Int): Bitmap {
-        val (targetWidth, targetHeight) = computeScaledDimensions(
-            width = source.width,
-            height = source.height,
-            maxDimension = maxDimensionPx
-        )
-        if (targetWidth == source.width && targetHeight == source.height) {
-            return source
-        }
-        val scaled = Bitmap.createScaledBitmap(source, targetWidth, targetHeight, true)
-        if (scaled !== source) {
-            source.recycle()
-        }
-        return scaled
-    }
-
     private fun writeAtomicWebp(targetFile: File, bitmap: Bitmap): Outcome<String, AppError> {
         val dir = targetFile.parentFile ?: thumbnailsDir
-        if (!dir.exists() && !dir.mkdirs()) {
-            bitmap.recycle()
+        if (!dir.exists() && !dir.mkdirs() && !dir.exists()) {
+            bitmap.takeUnless { it.isRecycled }?.recycle()
             return Outcome.Failure(AppError.Io("Unable to create private thumbnail directory."))
         }
 
@@ -364,7 +339,7 @@ internal class AndroidLocalThumbnailGenerator(
         } catch (error: IOException) {
             Outcome.Failure(AppError.Io("Failed to write WebP thumbnail file.", cause = error))
         } finally {
-            bitmap.recycle()
+            bitmap.takeUnless { it.isRecycled }?.recycle()
             if (tempFile.exists()) {
                 tempFile.delete()
             }
@@ -376,6 +351,41 @@ internal class AndroidLocalThumbnailGenerator(
         const val MAX_THUMB_DIMENSION_PX = 320
         const val WEBP_QUALITY = 80
     }
+}
+
+private fun scaleFrameSafely(frame: Bitmap, maxDimensionPx: Int): Outcome<Bitmap, AppError> = try {
+    Outcome.Success(scaleToFitBounds(frame, maxDimensionPx))
+} catch (error: OutOfMemoryError) {
+    frame.takeUnless { it.isRecycled }?.recycle()
+    Outcome.Failure(AppError.Io("Out of memory while scaling video thumbnail.", cause = error))
+} catch (error: IllegalArgumentException) {
+    frame.takeUnless { it.isRecycled }?.recycle()
+    Outcome.Failure(AppError.Io("Invalid video frame dimensions during scaling.", cause = error))
+}
+
+private fun applyExifOrientation(source: Bitmap, orientation: Int): Bitmap {
+    val matrix = computeExifMatrix(orientation) ?: return source
+    val transformed = Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
+    if (transformed !== source) {
+        source.recycle()
+    }
+    return transformed
+}
+
+private fun scaleToFitBounds(source: Bitmap, maxDimensionPx: Int): Bitmap {
+    val (targetWidth, targetHeight) = computeScaledDimensions(
+        width = source.width,
+        height = source.height,
+        maxDimension = maxDimensionPx
+    )
+    if (targetWidth == source.width && targetHeight == source.height) {
+        return source
+    }
+    val scaled = Bitmap.createScaledBitmap(source, targetWidth, targetHeight, true)
+    if (scaled !== source) {
+        source.recycle()
+    }
+    return scaled
 }
 
 private fun moveReplacingTarget(source: File, target: File) {
