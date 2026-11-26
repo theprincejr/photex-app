@@ -323,6 +323,52 @@ class LocalThumbnailGeneratorTest {
     }
 
     @Test
+    fun `given recycled or oom video frame_when generating_then fails safely keeping existing`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val dispatchers = testDispatchers(testScheduler)
+        val existing = AndroidLocalThumbnailGenerator(context, dispatchers)
+            .thumbnailFileFor("api26-missing")
+            .apply {
+                parentFile?.mkdirs()
+                writeBytes(byteArrayOf(5, 6, 7))
+            }
+
+        val preRecycled = Bitmap.createBitmap(16, 16, Bitmap.Config.ARGB_8888).apply { recycle() }
+        val badFrameGen = AndroidLocalThumbnailGenerator(
+            context = context,
+            dispatcherProvider = dispatchers,
+            videoFrameDecoder = object : VideoFrameDecoder {
+                override fun decodeVideoFrame(context: Context, uri: Uri, maxDimensionPx: Int): Bitmap = preRecycled
+            }
+        )
+        assertTrue(
+            badFrameGen.generateThumbnail(
+                itemId = "api26-missing",
+                sourceUri = "content://media/external/video/media/90",
+                mediaType = MediaType.VIDEO
+            ) is Outcome.Failure
+        )
+        assertEquals(listOf(5.toByte(), 6.toByte(), 7.toByte()), existing.readBytes().toList())
+
+        val oomGen = AndroidLocalThumbnailGenerator(
+            context = context,
+            dispatcherProvider = dispatchers,
+            videoFrameDecoder = AndroidVideoFrameDecoder(
+                sdkIntProvider = { Build.VERSION_CODES.O },
+                legacyMediaStoreThumb = { _, _ -> throw OutOfMemoryError("Simulated low heap") }
+            )
+        )
+        assertTrue(
+            oomGen.generateThumbnail(
+                itemId = "api26-missing",
+                sourceUri = "content://media/external/video/media/91",
+                mediaType = MediaType.VIDEO
+            ) is Outcome.Failure
+        )
+        assertEquals(listOf(5.toByte(), 6.toByte(), 7.toByte()), existing.readBytes().toList())
+    }
+
+    @Test
     fun `given api27 plus video decoder_when succeeding or failing_then releases retriever cleanly`() = runTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val dispatchers = testDispatchers(testScheduler)

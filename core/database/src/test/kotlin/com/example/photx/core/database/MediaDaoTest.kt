@@ -579,6 +579,59 @@ class MediaDaoTest {
             syncStateDao.transitionSyncState("q-atomic", SyncState.FAILED, expectedFrom = SyncState.QUEUED)
         )
         assertEquals(SyncState.FAILED, mediaDao.getById("q-atomic")?.syncState)
+
+        // Invalid direct jumps are explicitly rejected with typed RejectedTransition.
+        assertTrue(
+            syncStateDao.transitionSyncState("q-atomic", SyncState.SYNCED)
+                is MediaStateMutationResult.RejectedTransition
+        )
+        mediaDao.upsertLocalMedia(localDiscovery(id = "q-race", localUri = "content://q/race", takenAt = 3L))
+        assertTrue(
+            syncStateDao.transitionSyncState("q-race", SyncState.FAILED)
+                is MediaStateMutationResult.RejectedTransition
+        )
+        assertTrue(syncStateDao.transitionSyncState("q-race", SyncState.QUEUED) is MediaStateMutationResult.Applied)
+        assertTrue(
+            syncStateDao.transitionSyncState("q-race", SyncState.CLOUD_ONLY)
+                is MediaStateMutationResult.RejectedTransition
+        )
+    }
+
+    @Test
+    fun `given concurrent wal worker and stale queued failure_then worker wins without data loss`() = runBlocking {
+        val dbFile: File = tempFolder.newFile("photx-wal-queued-race.db")
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val walDb = Room.databaseBuilder(context, PhotxDatabase::class.java, dbFile.absolutePath)
+            .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
+            .build()
+
+        try {
+            val walMediaDao = walDb.mediaDao()
+            val walSyncDao = walDb.syncStateDao()
+            walMediaDao.upsertLocalMedia(localDiscovery(id = "race-q", localUri = "content://race/q", takenAt = 10L))
+            assertTrue(walSyncDao.transitionSyncState("race-q", SyncState.QUEUED) is MediaStateMutationResult.Applied)
+
+            val gate = CountDownLatch(1)
+            val uploadStart = async(Dispatchers.IO) {
+                gate.await()
+                walSyncDao.transitionSyncState("race-q", SyncState.UPLOADING, expectedFrom = SyncState.QUEUED)
+            }
+            val staleFail = async(Dispatchers.IO) {
+                gate.await()
+                walSyncDao.transitionSyncState("race-q", SyncState.FAILED, expectedFrom = SyncState.QUEUED)
+            }
+            gate.countDown()
+
+            val startRes = uploadStart.await()
+            val failRes = staleFail.await()
+            val outcomes = listOf(startRes, failRes)
+            assertEquals(1, outcomes.count { it is MediaStateMutationResult.Applied })
+            assertEquals(1, outcomes.count { it is MediaStateMutationResult.StaleOrConcurrentModification })
+            val finalState = walMediaDao.getById("race-q")?.syncState
+            assertTrue(finalState == SyncState.UPLOADING || finalState == SyncState.FAILED)
+        } finally {
+            walDb.close()
+        }
     }
 
     private suspend fun promoteToSynced(
