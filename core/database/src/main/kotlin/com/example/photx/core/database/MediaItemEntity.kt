@@ -25,7 +25,8 @@ import com.example.photx.core.model.SyncState
             value = ["telegram_chat_id", "telegram_message_id"],
             unique = true
         ),
-        Index(name = "idx_media_local_uri", value = ["local_uri"], unique = true)
+        Index(name = "idx_media_local_uri", value = ["local_uri"], unique = true),
+        Index(name = "idx_media_correlation_token", value = ["upload_correlation_token"])
     ]
 )
 public data class MediaItemEntity(
@@ -63,7 +64,13 @@ public data class MediaItemEntity(
     @ColumnInfo(name = "taken_at")
     val takenAt: Long,
     @ColumnInfo(name = "sync_state")
-    val syncState: SyncState
+    val syncState: SyncState,
+    @ColumnInfo(name = "upload_correlation_token")
+    val uploadCorrelationToken: String? = null,
+    @ColumnInfo(name = "upload_attempt_uncertain", defaultValue = "0")
+    val uploadAttemptUncertain: Boolean = false,
+    @ColumnInfo(name = "dedup_canonical_id")
+    val dedupCanonicalId: String? = null
 ) {
     init {
         require(id.isNotBlank()) { "MediaItemEntity id must not be blank." }

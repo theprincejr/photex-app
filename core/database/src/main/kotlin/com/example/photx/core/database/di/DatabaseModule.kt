@@ -3,9 +3,11 @@ package com.example.photx.core.database.di
 import android.content.Context
 import androidx.room.Room
 import androidx.room.RoomDatabase
+import com.example.photx.core.database.BackupLeaseDao
 import com.example.photx.core.database.LocalReconciliationDao
 import com.example.photx.core.database.MediaDao
 import com.example.photx.core.database.PhotxDatabase
+import com.example.photx.core.database.PhotxDatabaseMigrations
 import com.example.photx.core.database.SyncStateDao
 import dagger.Module
 import dagger.Provides
@@ -39,8 +41,12 @@ public object DatabaseModule {
         PhotxDatabase::class.java,
         DATABASE_NAME
     )
+        .addMigrations(PhotxDatabaseMigrations.MIGRATION_1_2)
         .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
         .build()
+
+    @Provides
+    public fun provideBackupLeaseDao(database: PhotxDatabase): BackupLeaseDao = database.backupLeaseDao()
 
     @Provides
     public fun provideMediaDao(database: PhotxDatabase): MediaDao = database.mediaDao()

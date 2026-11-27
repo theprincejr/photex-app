@@ -3,25 +3,40 @@ package com.example.photx.core.data
 import com.example.photx.core.common.AppError
 import com.example.photx.core.common.DispatcherProvider
 import com.example.photx.core.common.Outcome
+import com.example.photx.core.database.CloudOnlyUpsertResult
 import com.example.photx.core.database.LocalMediaUpsertResult
 import com.example.photx.core.database.LocalReconciliationDao
 import com.example.photx.core.database.LocalTrackedSnapshot
 import com.example.photx.core.database.MediaDao
+import com.example.photx.core.database.MediaItemEntity
 import com.example.photx.core.database.MediaStateMutationResult
 import com.example.photx.core.database.SyncStateDao
 import com.example.photx.core.database.di.PhotxMediaDaos
+import com.example.photx.core.domain.backup.CloudDownloadProgress
+import com.example.photx.core.domain.backup.TelegramBackupGateway
+import com.example.photx.core.domain.backup.TelegramConfirmedBackup
+import com.example.photx.core.domain.backup.TelegramOriginalDownloadRequest
+import com.example.photx.core.domain.backup.TelegramOriginalDownloadResult
+import com.example.photx.core.domain.backup.TelegramReconciliationResult
 import com.example.photx.core.domain.gallery.ActiveUploadRegistry
 import com.example.photx.core.domain.gallery.ActiveUploadSnapshot
+import com.example.photx.core.domain.gallery.BackupStatusCounts
+import com.example.photx.core.domain.gallery.CloudDiscoverySummary
+import com.example.photx.core.domain.gallery.CloudOriginalResolution
 import com.example.photx.core.domain.gallery.GalleryMediaItem
 import com.example.photx.core.domain.gallery.GalleryReconcileSummary
 import com.example.photx.core.domain.gallery.GalleryRepository
 import com.example.photx.core.domain.gallery.MediaPermissionState
 import com.example.photx.core.domain.gallery.MediaScanScope
+import com.example.photx.core.domain.gallery.RestoreToDeviceResult
+import com.example.photx.core.media.MediaStoreRestorer
 import com.example.photx.core.media.MediaUriStatus
 import com.example.photx.core.media.ScannedMediaItem
 import com.example.photx.core.media.di.PhotxMediaServices
 import com.example.photx.core.model.MediaType
 import com.example.photx.core.model.SyncState
+import java.io.File
+import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
@@ -32,13 +47,17 @@ import kotlinx.coroutines.withContext
  * Offline-first [GalleryRepository] reconciling device `MediaStore` scans into Room without
  * mutating protected backup columns (`sync_state`, `sha256`, `telegram_*`).
  */
-@Suppress("TooManyFunctions")
+@Suppress("TooManyFunctions", "LargeClass")
 internal class DefaultGalleryRepository(
     daos: PhotxMediaDaos,
     private val mediaServices: PhotxMediaServices,
     private val activeUploadRegistry: ActiveUploadRegistry,
     private val dispatcherProvider: DispatcherProvider,
-    private val clockMillis: () -> Long = System::currentTimeMillis
+    private val clockMillis: () -> Long = System::currentTimeMillis,
+    private val telegramBackupGateway: TelegramBackupGateway? = null,
+    private val thumbnailCacheDir: File? = null,
+    private val restoreCacheDir: File? = null,
+    private val mediaStoreRestorer: MediaStoreRestorer? = null
 ) : GalleryRepository {
     private val mediaDao: MediaDao = daos.mediaDao
     private val syncStateDao: SyncStateDao = daos.syncStateDao
@@ -46,6 +65,20 @@ internal class DefaultGalleryRepository(
     private val reconcileMutex = Mutex()
 
     override fun observeTotalCount(): Flow<Int> = mediaDao.observeTotalCount()
+
+    override fun observeBackupStatusCounts(): Flow<BackupStatusCounts> =
+        mediaDao.observeBackupStatusCounts().map { counts ->
+            BackupStatusCounts(
+                totalCount = counts.totalCount,
+                localOnlyCount = counts.localOnlyCount,
+                queuedCount = counts.queuedCount,
+                uploadingCount = counts.uploadingCount,
+                syncedCount = counts.syncedCount,
+                cloudOnlyCount = counts.cloudOnlyCount,
+                failedCount = counts.failedCount,
+                waitingForReconciliationCount = counts.waitingForReconciliationCount
+            )
+        }
 
     override fun observeRecentMedia(limit: Int): Flow<List<GalleryMediaItem>> =
         reconciliationDao.observeRecentItems(limit).map { rows -> rows.map { it.toDomain() } }
@@ -348,6 +381,305 @@ internal class DefaultGalleryRepository(
         activeMediaIds = reconciliationDao.getAllMediaIds().toSet()
     )
 
+    override suspend fun discoverCloudOnlyMedia(): Outcome<CloudDiscoverySummary, AppError> =
+        withContext(dispatcherProvider.io) {
+            val gateway = telegramBackupGateway
+                ?: return@withContext Outcome.Failure(AppError.Unexpected("Telegram backup gateway is unavailable."))
+            var cursor = 0L
+            var discovered = 0
+            var matched = 0
+            var inserted = 0
+            var ignored = 0
+
+            for (pageIndex in 0 until CLOUD_DISCOVERY_MAX_PAGES) {
+                val pageOutcome = gateway.discoverBackedUpDocuments(
+                    fromMessageId = cursor,
+                    limit = CLOUD_DISCOVERY_PAGE_SIZE
+                )
+                val page = when (pageOutcome) {
+                    is Outcome.Failure -> return@withContext Outcome.Failure(pageOutcome.error)
+                    is Outcome.Success -> pageOutcome.value
+                }
+                ignored += page.ignoredNonPhotxCount
+                page.backups.forEach { backup ->
+                    discovered += 1
+                    when (mediaDao.upsertDiscoveredCloudOnly(backup.toCloudOnlyEntity())) {
+                        CloudOnlyUpsertResult.MATCHED_EXISTING -> matched += 1
+                        CloudOnlyUpsertResult.INSERTED_CLOUD_ONLY -> inserted += 1
+                    }
+                }
+                if (page.nextFromMessageId == 0L || page.nextFromMessageId == cursor) break
+                cursor = page.nextFromMessageId
+            }
+
+            mediaDao.findCloudOnlyItems().forEach { cloudItem ->
+                if (cloudItem.telegramThumbFileId != null &&
+                    !mediaServices.thumbnailGenerator.isThumbnailUsable(cloudItem.localThumbPath)
+                ) {
+                    ensureCloudThumbnail(cloudItem.id)
+                }
+            }
+            Outcome.Success(CloudDiscoverySummary(discovered, matched, inserted, ignored))
+        }
+
+    override suspend fun ensureCloudThumbnail(id: String): Outcome<String, AppError> =
+        withContext(dispatcherProvider.io) {
+            val item = mediaDao.getById(id)
+                ?: return@withContext Outcome.Failure(AppError.Validation("Unknown media item id=$id."))
+            val existingThumb = item.localThumbPath
+            if (mediaServices.thumbnailGenerator.isThumbnailUsable(existingThumb) && existingThumb != null) {
+                return@withContext Outcome.Success(existingThumb)
+            }
+            val gateway = telegramBackupGateway
+                ?: return@withContext Outcome.Failure(AppError.Unexpected("Telegram backup gateway is unavailable."))
+            val liveThumbId = if (item.telegramChatId != null && item.telegramMessageId != null) {
+                when (
+                    val resolved = gateway.resolveThumbnailFileId(
+                        chatId = item.telegramChatId!!,
+                        messageId = item.telegramMessageId!!
+                    )
+                ) {
+                    is Outcome.Success -> resolved.value?.also { freshId ->
+                        if (freshId != item.telegramThumbFileId) {
+                            mediaDao.updateTelegramThumbFileId(id, freshId)
+                        }
+                    }
+
+                    is Outcome.Failure -> null
+                }
+            } else {
+                null
+            }
+            val thumbFileId = liveThumbId ?: item.telegramThumbFileId
+                ?: return@withContext Outcome.Failure(
+                    AppError.Io("No remote Telegram thumbnail available for $id.")
+                )
+            val cacheDir = thumbnailCacheDir
+                ?: return@withContext Outcome.Failure(AppError.Io("Thumbnail cache directory is not configured."))
+            val destPath = File(cacheDir, "$id.cloud.jpg").absolutePath
+            when (val result = gateway.downloadThumbnail(thumbFileId, destPath)) {
+                is Outcome.Failure -> result
+
+                is Outcome.Success -> {
+                    mediaDao.updateLocalThumbPath(id, result.value)
+                    result
+                }
+            }
+        }
+
+    override suspend fun prepareCloudOriginalForViewer(
+        id: String,
+        onProgress: (CloudDownloadProgress) -> Unit
+    ): Outcome<CloudOriginalResolution, AppError> = withContext(dispatcherProvider.io) {
+        val item = mediaDao.getById(id)
+            ?: return@withContext Outcome.Failure(AppError.Validation("Unknown media item id=$id."))
+        if (item.mediaType != MediaType.IMAGE) {
+            return@withContext Outcome.Failure(
+                AppError.Validation("On-demand cloud viewing currently supports images only.")
+            )
+        }
+        val expectedSha256 = item.sha256?.takeIf { it.isNotBlank() }
+            ?: return@withContext Outcome.Failure(
+                AppError.Validation("Cloud item is missing expected SHA-256 metadata.")
+            )
+        val chatId = item.telegramChatId?.takeIf { it != 0L }
+            ?: return@withContext Outcome.Failure(AppError.Validation("Missing Telegram chat ID."))
+        val messageId = item.telegramMessageId?.takeIf { it > 0L }
+            ?: return@withContext Outcome.Failure(AppError.Validation("Missing Telegram message ID."))
+        val correlationToken = item.uploadCorrelationToken?.takeIf { it.isNotBlank() }
+            ?: return@withContext Outcome.Failure(AppError.Validation("Missing correlation token."))
+        val cacheDir = restoreCacheDir
+            ?: return@withContext Outcome.Failure(AppError.Io("Viewer restore cache directory is not configured."))
+        val cachedFile = File(cacheDir, "$id.orig")
+        if (isValidCachedOriginal(cachedFile, expectedSha256, item.sizeBytes)) {
+            return@withContext Outcome.Success(
+                CloudOriginalResolution(
+                    itemId = id,
+                    cachedFilePath = cachedFile.absolutePath,
+                    sha256 = expectedSha256,
+                    byteCount = cachedFile.length(),
+                    fromCache = true
+                )
+            )
+        }
+        if (cachedFile.exists()) {
+            cachedFile.delete()
+        }
+        val gateway = telegramBackupGateway
+            ?: return@withContext Outcome.Failure(AppError.Unexpected("Telegram backup gateway is unavailable."))
+        val request = TelegramOriginalDownloadRequest(
+            chatId = chatId,
+            messageId = messageId,
+            correlationToken = correlationToken,
+            expectedSha256 = expectedSha256,
+            expectedFileName = item.fileName,
+            expectedByteCount = item.sizeBytes.takeIf { it > 0L },
+            destinationPath = cachedFile.absolutePath
+        )
+        when (val result = gateway.downloadVerifiedOriginalDocument(request, onProgress)) {
+            is TelegramOriginalDownloadResult.Verified -> Outcome.Success(
+                CloudOriginalResolution(
+                    itemId = id,
+                    cachedFilePath = result.filePath,
+                    sha256 = result.sha256,
+                    byteCount = result.byteCount,
+                    fromCache = false
+                )
+            )
+
+            is TelegramOriginalDownloadResult.IntegrityFailed ->
+                Outcome.Failure(AppError.Validation(result.reason))
+
+            is TelegramOriginalDownloadResult.Failed -> Outcome.Failure(result.error)
+        }
+    }
+
+    override suspend fun restoreCloudItemToDevice(
+        id: String,
+        onProgress: (CloudDownloadProgress) -> Unit
+    ): Outcome<RestoreToDeviceResult, AppError> = withContext(dispatcherProvider.io) {
+        val item = mediaDao.getById(id)
+            ?: return@withContext Outcome.Failure(AppError.Validation("Unknown media item id=$id."))
+        if (item.mediaType != MediaType.IMAGE) {
+            return@withContext Outcome.Failure(
+                AppError.Validation("Device restoration currently supports images only.")
+            )
+        }
+        val restorer = mediaStoreRestorer
+            ?: return@withContext Outcome.Failure(AppError.Unexpected("MediaStore restorer is unavailable."))
+        val resolution = when (val prepared = prepareCloudOriginalForViewer(id, onProgress)) {
+            is Outcome.Failure -> return@withContext prepared
+            is Outcome.Success -> prepared.value
+        }
+        val restoredUri = when (
+            val insertResult = restorer.restoreImageToMediaStore(
+                sourceFile = File(resolution.cachedFilePath),
+                displayName = item.fileName,
+                mimeType = item.mimeType
+            )
+        ) {
+            is Outcome.Failure -> return@withContext insertResult
+            is Outcome.Success -> insertResult.value
+        }
+        mediaDao.markRestoredToDevice(id = id, localUri = restoredUri)
+        Outcome.Success(
+            RestoreToDeviceResult(
+                itemId = id,
+                restoredUri = restoredUri,
+                fileName = item.fileName
+            )
+        )
+    }
+
+    private suspend fun isValidCachedOriginal(
+        cachedFile: File,
+        expectedSha256: String,
+        expectedByteCount: Long
+    ): Boolean {
+        if (!cachedFile.isFile || !cachedFile.canRead() || cachedFile.length() <= 0L) {
+            return false
+        }
+        if (expectedByteCount > 0L && cachedFile.length() != expectedByteCount) {
+            return false
+        }
+        val restorer = mediaStoreRestorer
+        val actualSha = if (restorer != null) {
+            (restorer.computeFileSha256(cachedFile) as? Outcome.Success)?.value
+        } else {
+            null
+        }
+        return actualSha != null && actualSha.equals(expectedSha256, ignoreCase = true)
+    }
+
+    override suspend fun verifyRemoteBackupForDeletion(id: String): Outcome<TelegramConfirmedBackup, AppError> =
+        withContext(dispatcherProvider.io) {
+            val item = mediaDao.getById(id)
+                ?: return@withContext Outcome.Failure(AppError.Validation("Unknown media item id=$id."))
+            val readyTuple = item.extractVerifiedRoomBackup()
+                ?: return@withContext Outcome.Failure(
+                    AppError.Validation("Media item is not verified as SYNCED with remote correlation metadata.")
+                )
+            val gateway = telegramBackupGateway
+                ?: return@withContext Outcome.Failure(AppError.Unexpected("Telegram backup gateway is unavailable."))
+            when (
+                val recon = gateway.findBackupByCorrelationToken(
+                    correlationToken = readyTuple.correlationToken,
+                    expectedSha256 = readyTuple.sha256,
+                    expectedFileName = item.fileName,
+                    expectedByteCount = item.sizeBytes
+                )
+            ) {
+                is TelegramReconciliationResult.Matched -> {
+                    if (recon.backup.chatId == readyTuple.chatId &&
+                        recon.backup.messageId == readyTuple.messageId
+                    ) {
+                        Outcome.Success(recon.backup)
+                    } else {
+                        Outcome.Failure(AppError.Validation("Remote Telegram message ID mismatch."))
+                    }
+                }
+
+                is TelegramReconciliationResult.NotFound ->
+                    Outcome.Failure(AppError.Io("Remote Telegram backup document could not be found."))
+
+                is TelegramReconciliationResult.Ambiguous ->
+                    Outcome.Failure(AppError.Validation(recon.reason))
+
+                is TelegramReconciliationResult.Failed -> Outcome.Failure(recon.error)
+            }
+        }
+
+    private fun MediaItemEntity.extractVerifiedRoomBackup(): VerifiedRoomBackup? {
+        val chatId = telegramChatId?.takeIf { it != 0L }
+        val messageId = telegramMessageId?.takeIf { it > 0L }
+        val digest = sha256?.takeIf { it.isNotBlank() }
+        val token = uploadCorrelationToken?.takeIf { it.isNotBlank() }
+        val isSynced = syncState == SyncState.SYNCED && !uploadAttemptUncertain
+        val hasAllFields = listOfNotNull(chatId, messageId, digest, token).size == VERIFIED_FIELD_COUNT
+        return if (isSynced && hasAllFields) {
+            VerifiedRoomBackup(chatId!!, messageId!!, digest!!, token!!)
+        } else {
+            null
+        }
+    }
+
+    private data class VerifiedRoomBackup(
+        val chatId: Long,
+        val messageId: Long,
+        val sha256: String,
+        val correlationToken: String
+    )
+
+    private fun TelegramConfirmedBackup.toCloudOnlyEntity(): MediaItemEntity {
+        val stableCloudId = UUID.nameUUIDFromBytes("tg:$chatId:$messageId".toByteArray()).toString()
+        val inferredType = if (mimeType.startsWith("video/", ignoreCase = true)) {
+            MediaType.VIDEO
+        } else {
+            MediaType.IMAGE
+        }
+        return MediaItemEntity(
+            id = stableCloudId,
+            sha256 = metadata.sha256,
+            localUri = null,
+            localThumbPath = null,
+            mediaType = inferredType,
+            telegramChatId = chatId,
+            telegramMessageId = messageId,
+            telegramFileId = telegramFileId,
+            telegramThumbFileId = telegramThumbFileId,
+            fileName = fileName,
+            mimeType = mimeType,
+            sizeBytes = byteCount,
+            width = 0,
+            height = 0,
+            durationMs = 0L,
+            takenAt = if (dateSeconds > 0L) dateSeconds * 1_000L else clockMillis(),
+            syncState = SyncState.CLOUD_ONLY,
+            uploadCorrelationToken = metadata.correlationToken,
+            uploadAttemptUncertain = false
+        )
+    }
+
     private data class ThumbnailWorkItem(val itemId: String, val sourceUri: String, val mediaType: MediaType)
 
     private data class RebindPair(val oldSnapshot: LocalTrackedSnapshot, val newScanned: ScannedMediaItem)
@@ -441,5 +773,8 @@ internal class DefaultGalleryRepository(
 
     internal companion object {
         const val MAX_ACTIVE_UPLOAD_SNAPSHOT_AGE_MS: Long = 10_000L
+        const val CLOUD_DISCOVERY_PAGE_SIZE = 50
+        const val CLOUD_DISCOVERY_MAX_PAGES = 10
+        const val VERIFIED_FIELD_COUNT = 4
     }
 }

@@ -106,12 +106,35 @@ public sealed interface LocalMediaUpsertResult {
 }
 
 /**
+ * Outcome of reconciling a remote `#photx v1` backup into Room.
+ */
+public enum class CloudOnlyUpsertResult {
+    MATCHED_EXISTING,
+    INSERTED_CLOUD_ONLY
+}
+
+/**
+ * Aggregate Row counts grouped by sync state and uncertain upload status.
+ */
+public data class MediaBackupCountsTuple(
+    public val totalCount: Int,
+    public val localOnlyCount: Int,
+    public val queuedCount: Int,
+    public val uploadingCount: Int,
+    public val syncedCount: Int,
+    public val cloudOnlyCount: Int,
+    public val failedCount: Int,
+    public val waitingForReconciliationCount: Int
+)
+
+/**
  * Room DAO for indexed media timeline queries, local MediaStore reconciliation, and lookups.
  *
  * Raw full-row `@Upsert` is intentionally absent so local scans cannot reset `sync_state` or
  * overwrite `sha256` / Telegram references. All state transitions go through [SyncStateDao].
  */
 @Dao
+@Suppress("TooManyFunctions")
 public abstract class MediaDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     protected abstract suspend fun insertLocalIgnore(item: MediaItemEntity): Long
@@ -119,30 +142,35 @@ public abstract class MediaDao {
     @Update(entity = MediaItemEntity::class)
     protected abstract suspend fun updateLocalMetadataPatch(patch: LocalMediaPatch): Int
 
+    @Query(
+        "UPDATE media_items SET sha256 = NULL " +
+            "WHERE id = :id AND sync_state IN ('LOCAL_ONLY', 'QUEUED', 'UPLOADING', 'FAILED')"
+    )
+    protected abstract suspend fun clearSha256OnSourceChange(id: String): Int
+
     /**
      * Safely reconciles a discovered local MediaStore record into Room.
      *
      * Inserts new items strictly in [SyncState.LOCAL_ONLY]. Existing records matched by `local_uri`
-     * refresh only local file metadata while preserving `id`, `sync_state`, `sha256`,
-     * `local_thumb_path`, and all Telegram references.
+     * refresh only local file metadata while preserving `id`, `sync_state`, and Telegram
+     * references, and invalidate `sha256` on unsynced rows if `size_bytes` or `taken_at` changed.
      */
     @Transaction
     public open suspend fun upsertLocalMedia(discovery: LocalMediaDiscovery): LocalMediaUpsertResult {
         val existingByUri = findByLocalUri(discovery.localUri)
-        return if (existingByUri != null) {
-            updateLocalMetadataPatch(discovery.toMetadataPatch(existingId = existingByUri.id))
-            LocalMediaUpsertResult.MetadataUpdated(existingByUri.id)
-        } else if (insertLocalIgnore(discovery.toNewEntity()) != -1L) {
-            LocalMediaUpsertResult.Inserted(discovery.id)
+        val target = existingByUri ?: if (insertLocalIgnore(discovery.toNewEntity()) != -1L) {
+            return LocalMediaUpsertResult.Inserted(discovery.id)
         } else {
-            val racedExisting = findByLocalUri(discovery.localUri)
-                ?: error(
-                    "Local media insert failed due to primary-key collision for id=${discovery.id} " +
-                        "without matching local_uri=${discovery.localUri}"
-                )
-            updateLocalMetadataPatch(discovery.toMetadataPatch(existingId = racedExisting.id))
-            LocalMediaUpsertResult.MetadataUpdated(racedExisting.id)
+            findByLocalUri(discovery.localUri) ?: error(
+                "Local media insert failed due to primary-key collision for id=${discovery.id} " +
+                    "without matching local_uri=${discovery.localUri}"
+            )
         }
+        updateLocalMetadataPatch(discovery.toMetadataPatch(existingId = target.id))
+        if (target.sizeBytes != discovery.sizeBytes || target.takenAt != discovery.takenAt) {
+            clearSha256OnSourceChange(target.id)
+        }
+        return LocalMediaUpsertResult.MetadataUpdated(target.id)
     }
 
     @Query("SELECT * FROM media_items ORDER BY taken_at DESC, id DESC")
@@ -160,9 +188,68 @@ public abstract class MediaDao {
     @Query("SELECT * FROM media_items WHERE sha256 = :sha256 ORDER BY taken_at DESC, id DESC")
     public abstract suspend fun findBySha256(sha256: String): List<MediaItemEntity>
 
+    @Query(
+        "SELECT * FROM media_items WHERE telegram_chat_id = :chatId AND telegram_message_id = :messageId LIMIT 1"
+    )
+    public abstract suspend fun findByTelegramRef(chatId: Long, messageId: Long): MediaItemEntity?
+
+    @Query(
+        "UPDATE media_items SET telegram_thumb_file_id = :thumbFileId " +
+            "WHERE id = :id AND (telegram_thumb_file_id IS NULL OR telegram_thumb_file_id != :thumbFileId)"
+    )
+    public abstract suspend fun updateTelegramThumbFileId(id: String, thumbFileId: Int): Int
+
+    @Query("SELECT * FROM media_items WHERE sync_state = 'CLOUD_ONLY' ORDER BY taken_at DESC, id DESC")
+    public abstract suspend fun findCloudOnlyItems(): List<MediaItemEntity>
+
+    @Transaction
+    public open suspend fun upsertDiscoveredCloudOnly(discovered: MediaItemEntity): CloudOnlyUpsertResult {
+        val chatId = discovered.telegramChatId
+        val msgId = discovered.telegramMessageId
+        val existing = if (chatId != null && msgId != null) {
+            findByTelegramRef(chatId, msgId)
+        } else {
+            null
+        } ?: discovered.sha256?.let { findBySha256(it).firstOrNull() }
+
+        return if (existing != null) {
+            val remoteThumbId = discovered.telegramThumbFileId
+            if (remoteThumbId != null && existing.telegramThumbFileId != remoteThumbId) {
+                updateTelegramThumbFileId(existing.id, remoteThumbId)
+            }
+            CloudOnlyUpsertResult.MATCHED_EXISTING
+        } else {
+            insertLocalIgnore(discovered)
+            CloudOnlyUpsertResult.INSERTED_CLOUD_ONLY
+        }
+    }
+
     @Query("SELECT * FROM media_items WHERE sync_state = :syncState ORDER BY taken_at ASC, id ASC LIMIT 1")
     public abstract suspend fun findNextBySyncState(syncState: SyncState): MediaItemEntity?
 
     @Query("UPDATE media_items SET local_thumb_path = :localThumbPath WHERE id = :id")
     public abstract suspend fun updateLocalThumbPath(id: String, localThumbPath: String?): Int
+
+    @Query(
+        "UPDATE media_items SET local_uri = :localUri, sync_state = 'SYNCED', upload_attempt_uncertain = 0 " +
+            "WHERE id = :id"
+    )
+    public abstract suspend fun markRestoredToDevice(id: String, localUri: String): Int
+
+    @Query(
+        "SELECT " +
+            "COUNT(*) AS totalCount, " +
+            "COALESCE(SUM(CASE WHEN sync_state = 'LOCAL_ONLY' THEN 1 ELSE 0 END), 0) AS localOnlyCount, " +
+            "COALESCE(SUM(CASE WHEN sync_state = 'QUEUED' THEN 1 ELSE 0 END), 0) AS queuedCount, " +
+            "COALESCE(SUM(CASE WHEN sync_state = 'UPLOADING' AND upload_attempt_uncertain = 0 THEN 1 ELSE 0 END), 0) " +
+            "AS uploadingCount, " +
+            "COALESCE(SUM(CASE WHEN sync_state = 'SYNCED' THEN 1 ELSE 0 END), 0) AS syncedCount, " +
+            "COALESCE(SUM(CASE WHEN sync_state = 'CLOUD_ONLY' THEN 1 ELSE 0 END), 0) AS cloudOnlyCount, " +
+            "COALESCE(SUM(CASE WHEN sync_state = 'FAILED' AND upload_attempt_uncertain = 0 THEN 1 ELSE 0 END), 0) " +
+            "AS failedCount, " +
+            "COALESCE(SUM(CASE WHEN upload_attempt_uncertain = 1 THEN 1 ELSE 0 END), 0) " +
+            "AS waitingForReconciliationCount " +
+            "FROM media_items"
+    )
+    public abstract fun observeBackupStatusCounts(): Flow<MediaBackupCountsTuple>
 }

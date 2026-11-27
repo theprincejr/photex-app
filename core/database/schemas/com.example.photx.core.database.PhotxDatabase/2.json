@@ -1,0 +1,242 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 2,
+    "identityHash": "e6fae4d0c36edf8b8cc6d32c6b7de011",
+    "entities": [
+      {
+        "tableName": "media_items",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `sha256` TEXT, `local_uri` TEXT, `local_thumb_path` TEXT, `media_type` TEXT NOT NULL, `telegram_chat_id` INTEGER, `telegram_message_id` INTEGER, `telegram_file_id` INTEGER, `telegram_thumb_file_id` INTEGER, `file_name` TEXT NOT NULL, `mime_type` TEXT NOT NULL, `size_bytes` INTEGER NOT NULL, `width` INTEGER NOT NULL, `height` INTEGER NOT NULL, `duration_ms` INTEGER NOT NULL, `taken_at` INTEGER NOT NULL, `sync_state` TEXT NOT NULL, `upload_correlation_token` TEXT, `upload_attempt_uncertain` INTEGER NOT NULL DEFAULT 0, `dedup_canonical_id` TEXT, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sha256",
+            "columnName": "sha256",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "localUri",
+            "columnName": "local_uri",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "localThumbPath",
+            "columnName": "local_thumb_path",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "mediaType",
+            "columnName": "media_type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "telegramChatId",
+            "columnName": "telegram_chat_id",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "telegramMessageId",
+            "columnName": "telegram_message_id",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "telegramFileId",
+            "columnName": "telegram_file_id",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "telegramThumbFileId",
+            "columnName": "telegram_thumb_file_id",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "fileName",
+            "columnName": "file_name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mimeType",
+            "columnName": "mime_type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sizeBytes",
+            "columnName": "size_bytes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "width",
+            "columnName": "width",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "height",
+            "columnName": "height",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "durationMs",
+            "columnName": "duration_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "takenAt",
+            "columnName": "taken_at",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "syncState",
+            "columnName": "sync_state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "uploadCorrelationToken",
+            "columnName": "upload_correlation_token",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "uploadAttemptUncertain",
+            "columnName": "upload_attempt_uncertain",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "dedupCanonicalId",
+            "columnName": "dedup_canonical_id",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "idx_media_taken_at_id",
+            "unique": false,
+            "columnNames": [
+              "taken_at",
+              "id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `idx_media_taken_at_id` ON `${TABLE_NAME}` (`taken_at`, `id`)"
+          },
+          {
+            "name": "idx_media_sha256",
+            "unique": false,
+            "columnNames": [
+              "sha256"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `idx_media_sha256` ON `${TABLE_NAME}` (`sha256`)"
+          },
+          {
+            "name": "idx_media_sync_state",
+            "unique": false,
+            "columnNames": [
+              "sync_state"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `idx_media_sync_state` ON `${TABLE_NAME}` (`sync_state`)"
+          },
+          {
+            "name": "idx_media_telegram_msg",
+            "unique": true,
+            "columnNames": [
+              "telegram_chat_id",
+              "telegram_message_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `idx_media_telegram_msg` ON `${TABLE_NAME}` (`telegram_chat_id`, `telegram_message_id`)"
+          },
+          {
+            "name": "idx_media_local_uri",
+            "unique": true,
+            "columnNames": [
+              "local_uri"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `idx_media_local_uri` ON `${TABLE_NAME}` (`local_uri`)"
+          },
+          {
+            "name": "idx_media_correlation_token",
+            "unique": false,
+            "columnNames": [
+              "upload_correlation_token"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `idx_media_correlation_token` ON `${TABLE_NAME}` (`upload_correlation_token`)"
+          }
+        ]
+      },
+      {
+        "tableName": "backup_execution_lease",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER NOT NULL, `owner_worker_id` TEXT, `active_media_id` TEXT, `acquired_at_ms` INTEGER NOT NULL, `expires_at_ms` INTEGER NOT NULL, `fencing_token` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "ownerWorkerId",
+            "columnName": "owner_worker_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "activeMediaId",
+            "columnName": "active_media_id",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "acquiredAtMs",
+            "columnName": "acquired_at_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "expiresAtMs",
+            "columnName": "expires_at_ms",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fencingToken",
+            "columnName": "fencing_token",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'e6fae4d0c36edf8b8cc6d32c6b7de011')"
+    ]
+  }
+}

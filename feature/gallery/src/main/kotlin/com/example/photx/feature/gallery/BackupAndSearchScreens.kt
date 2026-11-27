@@ -34,6 +34,7 @@ import androidx.compose.ui.Modifier
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.photx.core.designsystem.PhotxTheme
+import com.example.photx.core.domain.gallery.BackupExecutionState
 import com.example.photx.core.domain.gallery.GalleryMediaItem
 import com.example.photx.core.model.SyncState
 import com.example.photx.core.ui.PhotxBadgeDisplayMode
@@ -59,6 +60,7 @@ public fun BackupRoute(
         uiState = uiState,
         onOpenAuth = onOpenAuth,
         onRetryScan = onRetryScan,
+        onDiscoverCloudMedia = viewModel::discoverCloudMedia,
         modifier = modifier
     )
 }
@@ -68,7 +70,8 @@ public fun BackupScreen(
     uiState: GalleryUiState,
     onOpenAuth: () -> Unit,
     onRetryScan: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onDiscoverCloudMedia: () -> Unit = {}
 ) {
     val colors = PhotxTheme.colorScheme
     val syncColors = PhotxTheme.syncColors
@@ -100,34 +103,45 @@ public fun BackupScreen(
             BackupAccountCard(
                 accountLabel = uiState.accountLabel,
                 totalCount = summary.totalCount,
-                onOpenAuth = onOpenAuth
+                onOpenAuth = onOpenAuth,
+                onDiscoverCloudMedia = onDiscoverCloudMedia
             )
         }
 
-        val err = uiState.refreshErrorMessage
+        val err = uiState.refreshErrorMessage ?: uiState.backupErrorMessage
         if (err != null) {
-            item {
-                PhotxErrorState(title = "Sync status warning", message = err, onRetry = onRetryScan)
-            }
+            item { PhotxErrorState(title = "Sync status warning", message = err, onRetry = onRetryScan) }
         }
 
         if (summary.totalCount == 0) {
             item {
                 PhotxEmptyState(
                     title = "No indexed media",
-                    message = "Index local photos first to inspect live Room synchronization counts."
+                    message = "Index local photos first, then select items in Photos to queue a backup."
                 )
             }
         } else {
-            item {
-                BackupCountsCard(summary = summary)
+            item { BackupCountsCard(summary = summary) }
+            item { BackupExecutionStatusCard(executionState = uiState.backupExecutionState) }
+            if (!summary.hasAnyBackupActivity) {
+                item {
+                    PhotxEmptyState(
+                        title = "No backups queued yet",
+                        message = "Open Photos, tap Select, choose local media, and tap Back Up to start."
+                    )
+                }
             }
         }
     }
 }
 
 @Composable
-private fun BackupAccountCard(accountLabel: String?, totalCount: Int, onOpenAuth: () -> Unit) {
+private fun BackupAccountCard(
+    accountLabel: String?,
+    totalCount: Int,
+    onOpenAuth: () -> Unit,
+    onDiscoverCloudMedia: () -> Unit
+) {
     val colors = PhotxTheme.colorScheme
     val syncColors = PhotxTheme.syncColors
     val spacing = PhotxTheme.spacing
@@ -140,34 +154,103 @@ private fun BackupAccountCard(accountLabel: String?, totalCount: Int, onOpenAuth
             )
             Spacer(modifier = Modifier.height(spacing.xs))
             Text(
-                text = "Indexed items: $totalCount. Background auto-backup activates in Phase 3.",
+                text = "Total local & indexed media: $totalCount",
                 style = PhotxTheme.typography.bodyMedium,
                 color = colors.onSurfaceVariant
             )
-            if (accountLabel == null) {
-                Spacer(modifier = Modifier.height(spacing.md))
-                Button(
-                    onClick = onOpenAuth,
-                    shape = CircleShape,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = syncColors.ctaContainer,
-                        contentColor = syncColors.onCtaContainer
-                    )
-                ) {
-                    Text(text = "Sign In to Telegram", style = PhotxTheme.typography.labelLarge)
-                }
+            Spacer(modifier = Modifier.height(spacing.md))
+            Button(
+                onClick = if (accountLabel == null) onOpenAuth else onDiscoverCloudMedia,
+                shape = CircleShape,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = syncColors.ctaContainer,
+                    contentColor = syncColors.onCtaContainer
+                )
+            ) {
+                Text(
+                    text = if (accountLabel == null) "Sign In to Telegram" else "Sync Cloud Catalogue",
+                    style = PhotxTheme.typography.labelLarge
+                )
             }
         }
     }
 }
 
 @Composable
+private fun BackupExecutionStatusCard(executionState: BackupExecutionState) {
+    val colors = PhotxTheme.colorScheme
+    val spacing = PhotxTheme.spacing
+    val visuals = when (executionState) {
+        is BackupExecutionState.Idle -> ExecutionCardVisuals(
+            title = "Engine Idle",
+            detail = "No active background upload scheduled.",
+            container = colors.surface,
+            content = colors.onSurface
+        )
+
+        is BackupExecutionState.Queued -> ExecutionCardVisuals(
+            title = "Backup Queued",
+            detail = "Waiting for network constraints to start sequential upload.",
+            container = colors.surfaceVariant,
+            content = colors.onSurface
+        )
+
+        is BackupExecutionState.Running -> ExecutionCardVisuals(
+            title = "Backup Running",
+            detail = executionState.activeMediaId?.let {
+                "Uploading 1 file sequentially (item $it)."
+            } ?: "Uploading queued media sequentially (1 file at a time).",
+            container = colors.surfaceVariant,
+            content = colors.onSurface
+        )
+
+        is BackupExecutionState.WaitingForReconciliation -> ExecutionCardVisuals(
+            title = "Waiting for Reconciliation",
+            detail = "${executionState.uncertainMediaIds.size} uncertain upload(s) must be verified in " +
+                "Saved Messages before any new upload can run.",
+            container = colors.surfaceVariant,
+            content = colors.primary
+        )
+
+        is BackupExecutionState.Failed -> ExecutionCardVisuals(
+            title = "Backup Attention Needed",
+            detail = executionState.reason ?: "One or more uploads failed before completion.",
+            container = colors.errorContainer,
+            content = colors.onErrorContainer
+        )
+
+        is BackupExecutionState.Completed -> ExecutionCardVisuals(
+            title = "Backup Completed",
+            detail = "All queued uploads finished.",
+            container = colors.surface,
+            content = colors.onSurface
+        )
+    }
+
+    Surface(shape = RoundedCornerShape(PhotxTheme.radii.banner), color = visuals.container) {
+        Column(modifier = Modifier.fillMaxWidth().padding(spacing.md)) {
+            Text(text = visuals.title, style = PhotxTheme.typography.titleMedium, color = visuals.content)
+            Spacer(modifier = Modifier.height(spacing.xs))
+            Text(text = visuals.detail, style = PhotxTheme.typography.bodyMedium, color = visuals.content)
+        }
+    }
+}
+
+private data class ExecutionCardVisuals(
+    val title: String,
+    val detail: String,
+    val container: androidx.compose.ui.graphics.Color,
+    val content: androidx.compose.ui.graphics.Color
+)
+
+@Composable
 private fun BackupCountsCard(summary: BackupSummaryUiState) {
     val spacing = PhotxTheme.spacing
-    Surface(shape = RoundedCornerShape(PhotxTheme.radii.banner), color = PhotxTheme.colorScheme.surface) {
+    val colors = PhotxTheme.colorScheme
+    Surface(shape = RoundedCornerShape(PhotxTheme.radii.banner), color = colors.surface) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(spacing.md),
-            verticalArrangement = Arrangement.spacedBy(spacing.sm)
+            verticalArrangement = Arrangement.spacedBy(spacing.xs)
         ) {
             SyncCountRow(state = SyncState.LOCAL_ONLY, count = summary.localOnlyCount)
             SyncCountRow(state = SyncState.QUEUED, count = summary.queuedCount)
@@ -175,6 +258,18 @@ private fun BackupCountsCard(summary: BackupSummaryUiState) {
             SyncCountRow(state = SyncState.SYNCED, count = summary.syncedCount)
             SyncCountRow(state = SyncState.CLOUD_ONLY, count = summary.cloudOnlyCount)
             SyncCountRow(state = SyncState.FAILED, count = summary.failedCount)
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text(
+                    text = "Pending Reconciliation",
+                    style = PhotxTheme.typography.bodyMedium,
+                    color = colors.onSurfaceVariant
+                )
+                Text(
+                    text = summary.waitingForReconciliationCount.toString(),
+                    style = PhotxTheme.typography.titleMedium,
+                    color = colors.onSurface
+                )
+            }
         }
     }
 }

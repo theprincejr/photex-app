@@ -73,6 +73,7 @@ import java.util.Locale
 private const val MIN_ZOOM_SCALE = 1f
 private const val DOUBLE_TAP_ZOOM_SCALE = 2.5f
 private const val MAX_ZOOM_SCALE = 4f
+private const val PREVIEW_DIM_ALPHA = 0.25f
 private const val SHA256_PREVIEW_CHARS = 16
 private const val BYTES_PER_KB = 1024.0
 private const val BYTES_PER_MB = BYTES_PER_KB * BYTES_PER_KB
@@ -94,17 +95,25 @@ public fun MediaViewerRoute(
     MediaViewerScreen(
         uiState = uiState,
         onBack = onBack,
+        onEnsureCloudOriginal = { id -> viewModel.ensureCloudOriginalLoaded(id) },
+        onRetryCloudOriginal = { id -> viewModel.ensureCloudOriginalLoaded(id, forceRetry = true) },
+        onRestoreToDevice = viewModel::restoreToDevice,
         modifier = modifier
     )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-public fun MediaViewerScreen(uiState: MediaViewerUiState, onBack: () -> Unit, modifier: Modifier = Modifier) {
-    val glass = PhotxTheme.glass
+public fun MediaViewerScreen(
+    uiState: MediaViewerUiState,
+    onBack: () -> Unit,
+    modifier: Modifier = Modifier,
+    onEnsureCloudOriginal: (String) -> Unit = {},
+    onRetryCloudOriginal: (String) -> Unit = {},
+    onRestoreToDevice: (String) -> Unit = {}
+) {
     var showControls by remember { mutableStateOf(true) }
     var showInfoSheet by remember { mutableStateOf(false) }
-    var restoreNotice by remember { mutableStateOf<String?>(null) }
 
     Box(
         modifier = modifier
@@ -128,12 +137,15 @@ public fun MediaViewerScreen(uiState: MediaViewerUiState, onBack: () -> Unit, mo
             else -> ViewerPagerContent(
                 items = uiState.items,
                 initialIndex = uiState.initialIndex,
+                cloudOriginalStates = uiState.cloudOriginalStates,
+                restoreStates = uiState.restoreStates,
                 showControls = showControls,
                 showInfoSheet = showInfoSheet,
-                restoreNotice = restoreNotice,
                 onToggleControls = { showControls = !showControls },
                 onShowInfoChange = { showInfoSheet = it },
-                onRequestRestore = { restoreNotice = "Cloud restore from Telegram activates in Phase 5." },
+                onEnsureCloudOriginal = onEnsureCloudOriginal,
+                onRetryCloudOriginal = onRetryCloudOriginal,
+                onRestoreToDevice = onRestoreToDevice,
                 onBack = onBack
             )
         }
@@ -145,12 +157,15 @@ public fun MediaViewerScreen(uiState: MediaViewerUiState, onBack: () -> Unit, mo
 private fun ViewerPagerContent(
     items: List<GalleryMediaItem>,
     initialIndex: Int,
+    cloudOriginalStates: Map<String, CloudOriginalUiState>,
+    restoreStates: Map<String, CloudRestoreUiState>,
     showControls: Boolean,
     showInfoSheet: Boolean,
-    restoreNotice: String?,
     onToggleControls: () -> Unit,
     onShowInfoChange: (Boolean) -> Unit,
-    onRequestRestore: () -> Unit,
+    onEnsureCloudOriginal: (String) -> Unit,
+    onRetryCloudOriginal: (String) -> Unit,
+    onRestoreToDevice: (String) -> Unit,
     onBack: () -> Unit
 ) {
     val pagerState = rememberPagerState(
@@ -158,12 +173,27 @@ private fun ViewerPagerContent(
         pageCount = { items.size }
     )
     val currentItem = items[pagerState.currentPage]
+    val currentCloudState = cloudOriginalStates[currentItem.id] ?: CloudOriginalUiState.Idle
+    val currentRestoreState = restoreStates[currentItem.id] ?: CloudRestoreUiState.Idle
+
+    LaunchedEffect(currentItem.id, currentItem.syncState, currentItem.mediaType) {
+        if (currentItem.syncState == SyncState.CLOUD_ONLY && currentItem.mediaType == MediaType.IMAGE) {
+            onEnsureCloudOriginal(currentItem.id)
+        }
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         HorizontalPager(state = pagerState, modifier = Modifier.fillMaxSize()) { page ->
             val pageItem = items[page]
+            val pageCloudState = cloudOriginalStates[pageItem.id] ?: CloudOriginalUiState.Idle
             when (pageItem.mediaType) {
-                MediaType.IMAGE -> ZoomableImagePage(item = pageItem, onTap = onToggleControls)
+                MediaType.IMAGE -> ZoomableImagePage(
+                    item = pageItem,
+                    cloudOriginalState = pageCloudState,
+                    onTap = onToggleControls,
+                    onRetry = { onRetryCloudOriginal(pageItem.id) }
+                )
+
                 MediaType.VIDEO -> VideoPlayerPage(item = pageItem, isCurrentPage = page == pagerState.currentPage)
             }
         }
@@ -176,12 +206,18 @@ private fun ViewerPagerContent(
             ViewerTopBar(item = currentItem, onBack = onBack, onOpenInfo = { onShowInfoChange(true) })
         }
         AnimatedVisibility(
-            visible = showControls && currentItem.syncState == SyncState.CLOUD_ONLY,
+            visible = showControls &&
+                (currentItem.syncState == SyncState.CLOUD_ONLY || currentRestoreState is CloudRestoreUiState.Completed),
             enter = fadeIn(),
             exit = fadeOut(),
             modifier = Modifier.align(Alignment.BottomCenter)
         ) {
-            CloudRestoreBar(notice = restoreNotice, onRequestRestore = onRequestRestore)
+            CloudRestoreBar(
+                syncState = currentItem.syncState,
+                cloudOriginalState = currentCloudState,
+                restoreState = currentRestoreState,
+                onRequestRestore = { onRestoreToDevice(currentItem.id) }
+            )
         }
         if (showInfoSheet) {
             ModalBottomSheet(
@@ -195,7 +231,12 @@ private fun ViewerPagerContent(
 }
 
 @Composable
-private fun ZoomableImagePage(item: GalleryMediaItem, onTap: () -> Unit) {
+private fun ZoomableImagePage(
+    item: GalleryMediaItem,
+    cloudOriginalState: CloudOriginalUiState,
+    onTap: () -> Unit,
+    onRetry: () -> Unit
+) {
     var scale by remember(item.id) { mutableFloatStateOf(MIN_ZOOM_SCALE) }
     var offset by remember(item.id) { mutableStateOf(Offset.Zero) }
     val transformState = rememberTransformableState { zoomChange, panChange, _ ->
@@ -203,7 +244,13 @@ private fun ZoomableImagePage(item: GalleryMediaItem, onTap: () -> Unit) {
         scale = updatedScale
         offset = if (updatedScale > MIN_ZOOM_SCALE) offset + panChange else Offset.Zero
     }
-    val modelData: Any? = item.localUri?.let(Uri::parse) ?: item.localThumbPath?.let(::File)
+    val localUriModel = item.localUri?.let(Uri::parse)
+    val verifiedOriginalModel: Any? = when {
+        localUriModel != null -> localUriModel
+        item.syncState != SyncState.CLOUD_ONLY -> item.localThumbPath?.let(::File)
+        cloudOriginalState is CloudOriginalUiState.Ready -> File(cloudOriginalState.cachedFilePath)
+        else -> null
+    }
 
     Box(
         modifier = Modifier
@@ -212,11 +259,13 @@ private fun ZoomableImagePage(item: GalleryMediaItem, onTap: () -> Unit) {
                 detectTapGestures(
                     onTap = { onTap() },
                     onDoubleTap = {
-                        if (scale > MIN_ZOOM_SCALE) {
-                            scale = MIN_ZOOM_SCALE
-                            offset = Offset.Zero
-                        } else {
-                            scale = DOUBLE_TAP_ZOOM_SCALE
+                        if (verifiedOriginalModel != null) {
+                            if (scale > MIN_ZOOM_SCALE) {
+                                scale = MIN_ZOOM_SCALE
+                                offset = Offset.Zero
+                            } else {
+                                scale = DOUBLE_TAP_ZOOM_SCALE
+                            }
                         }
                     }
                 )
@@ -224,21 +273,98 @@ private fun ZoomableImagePage(item: GalleryMediaItem, onTap: () -> Unit) {
             .transformable(state = transformState, canPan = { scale > MIN_ZOOM_SCALE }),
         contentAlignment = Alignment.Center
     ) {
-        AsyncImage(
-            model = ImageRequest.Builder(LocalContext.current)
-                .data(modelData)
-                .build(),
-            contentDescription = item.fileName,
-            contentScale = ContentScale.Fit,
-            modifier = Modifier
-                .fillMaxSize()
-                .graphicsLayer(
-                    scaleX = scale,
-                    scaleY = scale,
-                    translationX = offset.x,
-                    translationY = offset.y
+        if (verifiedOriginalModel != null) {
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(verifiedOriginalModel)
+                    .build(),
+                contentDescription = item.fileName,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer(
+                        scaleX = scale,
+                        scaleY = scale,
+                        translationX = offset.x,
+                        translationY = offset.y
+                    )
+            )
+        } else {
+            // Show dimmed thumbnail preview only behind explicit downloading/error state (never as full-res).
+            val previewThumb = item.localThumbPath?.let(::File)
+            if (previewThumb != null) {
+                AsyncImage(
+                    model = ImageRequest.Builder(LocalContext.current).data(previewThumb).build(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    alpha = PREVIEW_DIM_ALPHA,
+                    modifier = Modifier.fillMaxSize()
                 )
-        )
+            }
+            CloudOriginalStatusOverlay(
+                cloudOriginalState = cloudOriginalState,
+                onRetry = onRetry
+            )
+        }
+    }
+}
+
+@Composable
+private fun CloudOriginalStatusOverlay(
+    cloudOriginalState: CloudOriginalUiState,
+    onRetry: () -> Unit
+) {
+    val spacing = PhotxTheme.spacing
+    val glass = PhotxTheme.glass
+    Surface(
+        shape = PhotxTheme.shapes.large,
+        color = glass.scrimContainer,
+        modifier = Modifier.padding(spacing.lg)
+    ) {
+        Column(
+            modifier = Modifier.padding(spacing.lg),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(spacing.sm)
+        ) {
+            when (cloudOriginalState) {
+                is CloudOriginalUiState.Idle,
+                is CloudOriginalUiState.Downloading -> {
+                    CircularProgressIndicator(color = PhotxTheme.colorScheme.primary)
+                    Text(
+                        text = "Downloading full-resolution original…",
+                        style = PhotxTheme.typography.titleSmall,
+                        color = glass.onScrim
+                    )
+                    if (cloudOriginalState is CloudOriginalUiState.Downloading && cloudOriginalState.totalBytes > 0L) {
+                        Text(
+                            text = "${formatBytes(cloudOriginalState.downloadedBytes)} / " +
+                                formatBytes(cloudOriginalState.totalBytes),
+                            style = PhotxTheme.typography.bodySmall,
+                            color = glass.onScrim
+                        )
+                    }
+                }
+
+                is CloudOriginalUiState.Failed -> {
+                    val heading = if (cloudOriginalState.isIntegrityError) {
+                        "Integrity verification failed"
+                    } else {
+                        "Download failed"
+                    }
+                    Text(text = heading, style = PhotxTheme.typography.titleSmall, color = glass.onScrim)
+                    Text(
+                        text = cloudOriginalState.message,
+                        style = PhotxTheme.typography.bodySmall,
+                        color = glass.onScrim
+                    )
+                    Button(onClick = onRetry, shape = CircleShape) {
+                        Text(text = "Retry")
+                    }
+                }
+
+                is CloudOriginalUiState.Ready -> Unit
+            }
+        }
     }
 }
 
@@ -333,9 +459,34 @@ private fun ViewerTopBar(item: GalleryMediaItem, onBack: () -> Unit, onOpenInfo:
 }
 
 @Composable
-private fun CloudRestoreBar(notice: String?, onRequestRestore: () -> Unit) {
+private fun CloudRestoreBar(
+    syncState: SyncState,
+    cloudOriginalState: CloudOriginalUiState,
+    restoreState: CloudRestoreUiState,
+    onRequestRestore: () -> Unit
+) {
     val spacing = PhotxTheme.spacing
     val syncColors = PhotxTheme.syncColors
+    val notice = when (restoreState) {
+        is CloudRestoreUiState.Restoring -> if (restoreState.totalBytes > 0L) {
+            "Restoring to device… ${formatBytes(restoreState.downloadedBytes)} / " +
+                formatBytes(restoreState.totalBytes)
+        } else {
+            "Restoring to device…"
+        }
+
+        is CloudRestoreUiState.Completed -> "Restored to device: ${restoreState.fileName}"
+        is CloudRestoreUiState.Failed -> "Restore failed: ${restoreState.message}"
+        CloudRestoreUiState.Idle -> when (cloudOriginalState) {
+            is CloudOriginalUiState.Ready -> if (cloudOriginalState.fromCache) {
+                "Verified original (cached)"
+            } else {
+                "Verified original ready"
+            }
+
+            else -> null
+        }
+    }
 
     Column(
         modifier = Modifier
@@ -355,17 +506,27 @@ private fun CloudRestoreBar(notice: String?, onRequestRestore: () -> Unit) {
             }
             Spacer(modifier = Modifier.height(spacing.sm))
         }
-        Button(
-            onClick = onRequestRestore,
-            shape = CircleShape,
-            colors = ButtonDefaults.buttonColors(
-                containerColor = syncColors.ctaContainer,
-                contentColor = syncColors.onCtaContainer
-            )
-        ) {
-            Icon(imageVector = Icons.Rounded.CloudDownload, contentDescription = null)
-            Spacer(modifier = Modifier.padding(horizontal = spacing.xxs))
-            Text(text = "Restore Original", style = PhotxTheme.typography.labelLarge)
+        if (syncState == SyncState.CLOUD_ONLY && restoreState !is CloudRestoreUiState.Completed) {
+            Button(
+                onClick = onRequestRestore,
+                enabled = restoreState !is CloudRestoreUiState.Restoring,
+                shape = CircleShape,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = syncColors.ctaContainer,
+                    contentColor = syncColors.onCtaContainer
+                )
+            ) {
+                Icon(imageVector = Icons.Rounded.CloudDownload, contentDescription = null)
+                Spacer(modifier = Modifier.padding(horizontal = spacing.xxs))
+                Text(
+                    text = if (restoreState is CloudRestoreUiState.Restoring) {
+                        "Restoring…"
+                    } else {
+                        "Restore to device"
+                    },
+                    style = PhotxTheme.typography.labelLarge
+                )
+            }
         }
     }
 }

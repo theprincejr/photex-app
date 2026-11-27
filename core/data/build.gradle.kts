@@ -20,6 +20,9 @@ dependencies {
     implementation(projects.core.media)
     implementation(projects.core.model)
     implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.androidx.work.runtime.ktx)
+    implementation(libs.androidx.hilt.work)
+    ksp(libs.androidx.hilt.compiler)
     api(libs.androidx.paging.runtime)
 
     testImplementation(libs.junit)
@@ -27,5 +30,6 @@ dependencies {
     testImplementation(libs.turbine)
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.androidx.room.runtime)
+    testImplementation(libs.androidx.work.testing)
     testImplementation(libs.robolectric)
 }

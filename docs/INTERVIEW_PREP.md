@@ -126,3 +126,41 @@ Cumulative interview questions grounded in PhotX's **actual implemented code and
 
 ### 27. How does PhotX render thousands of local photos smoothly in a 4-column chronological grid without decoding full-resolution bitmaps?
 > "Room emits a SQLite-backed `PagingSource` (`pageSize = 60`, `prefetchDistance = 30`) via `:core:data`'s `GalleryPagingRepository`. `:feature:gallery`'s `GalleryViewModel` inserts chronological `DateHeader` separators via `PagingData.insertSeparators` and caches the stream in `viewModelScope`. `PhotosScreen` renders `LazyVerticalGrid` (`GridCells.Fixed(4)`, `2.dp` gutters) using `itemKey` and `itemContentType`, where `PhotxPhotoThumbnailTile` passes **only** the `~320x320` WebP `localThumbPath` to Coil 3 (`AsyncImage`), reserving full-resolution `localUri` decoding strictly for `MediaViewerScreen`."
+
+---
+
+## Sequential Auto-Backup & Crash-Safe Recovery (`Phase 3 Design`)
+
+### 28. How does PhotX prevent duplicate Telegram uploads if the app crashes right after `sendMessage` succeeds but before Room commits `SYNCED`?
+> "Before calling `sendMessage`, `SyncStateDao.beginUncertainUpload` persists a stable `upload_correlation_token` and sets `upload_attempt_uncertain = 1` in Room, and the `InputMessageDocument` carries a deterministic `<= 200`-char `#photx v1 | sha256:<hex> | corr:<token>` caption in Saved Messages. On recovery, PhotX reconciles Saved Messages via `searchChatMessages` (requiring `useMessageDatabase = true`) and validates chat, sender, token, caption, and file identity before ever allowing a new upload."
+
+### 29. Why use `ExistingWorkPolicy.KEEP` plus a tail check and a Room lease instead of enqueuing one `WorkRequest` per photo?
+> "Enqueuing one `WorkRequest` per photo across 50,000 items bloats `WorkManager`'s internal SQLite database and makes enforcing a strict global `<= 1` active upload invariant fragile. Using one unique work chain (`"photx_sequential_backup"`, `ExistingWorkPolicy.KEEP`) paired with a post-loop tail check (`APPEND_OR_REPLACE` if `countQueued() > 0` after releasing the `backup_execution_lease`) prevents the `KEEP` lost-wakeup race while bounding memory (`64 KiB` single-pass stage-and-hash via `UploadFileStager`) and enforcing global single-upload exclusivity in SQLite."
+
+### 30. Why does `TdlibBackupGateway` separate `Confirmed`, `DefiniteFailure`, and `Uncertain` instead of returning a boolean or throwing?
+> "A `DefiniteFailure` (such as a missing staged file or a TDLib `UpdateMessageSendFailed` before acceptance) is safe to retry later without duplicating Telegram messages. An `Uncertain` outcome (such as a timeout, network drop, or process death after `SendMessage` returned a temporary local ID) means Telegram's server *might* have already accepted the document. Returning `Uncertain` forces the caller into correlation-token reconciliation (`findBackupByCorrelationToken`) instead of blindly calling `SendMessage` again."
+
+### 31. Why is `TelegramBackupGateway` in `:core:domain` while `TdlibBackupGateway` lives in `:core:telegram`?
+> "Keeping `TelegramBackupGateway` and `PhotxBackupMetadataCodec` in `:core:domain` ensures business rules (`#photx v1` 200-char encoding/strict decoding, upload contracts) are 100% pure JVM Kotlin with zero TDLib JNI or Android dependencies. `:core:telegram` implements that contract on the **same** singleton `AndroidTdlibGateway` session used by authentication, isolating `TdApi.InputMessageDocument`, `UpdateMessageSendSucceeded`, and `SearchChatMessages` behind a testable transport seam."
+
+### 32. Why does `SequentialBackupEngine` keep `upload_attempt_uncertain = 1` when `SearchChatMessages` returns `NotFound`?
+> "TDLib's `SearchChatMessages` is bounded (local message database + pagination cap). Not finding a message in that bounded search does **not** prove Telegram's server rejected the earlier upload — the message could still be in flight or unindexed. Clearing `upload_attempt_uncertain` on `NotFound` and retrying `SendMessage` could create a duplicate in Saved Messages, so PhotX keeps the item in `WaitingForReconciliation` (`ReconciliationPending`) until confirmed or explicitly resolved."
+
+### 33. How does the PhotX Backup UI avoid inventing fake progress or becoming a second source of truth?
+> "`PhotosScreen` only triggers `BackupScheduler.enqueueBackup(eligibleIds)` and shows immediate queued/error feedback. `GalleryViewModel` derives `BackupScreen`'s counts directly from `MediaDao.observeBackupStatusCounts()` and derives execution state (`Idle`, `Queued`, `Running`, `WaitingForReconciliation`, `Failed`, `Completed`) from `ActiveUploadRegistry.observeExecutionState()`. Because TDLib document progress isn't exposed as verified byte percentages yet, the UI displays honest sequential status without fake percentages and never offers a retry action that bypasses reconciliation."
+
+### 34. How does PhotX display thumbnails for `CLOUD_ONLY` items after cache eviction without downloading full-resolution documents?
+> "During upload, `UploadFileStager.prepareUploadThumbnail` creates a small `<= 320px` JPEG attached via `TdApi.InputThumbnail` on `InputMessageDocument`, so Telegram persists a separate `telegram_thumb_file_id`. If local thumbnails are evicted or on a fresh install, `DefaultGalleryRepository.ensureCloudThumbnail` calls `TdlibBackupGateway.downloadThumbnail(telegramThumbFileId)` (`TdApi.DownloadFile`), downloading **only** the small thumbnail file and never `telegramFileId`."
+
+### 35. How does PhotX prevent accidental data loss during `Free Up Space` (`CLOUD_ONLY` transition)?
+> "Before launching Android's `MediaStore.createDeleteRequest` system consent dialog, `verifyRemoteBackupForDeletion` checks Room (`SYNCED`, `uploadAttemptUncertain == false`, non-null chat/message IDs, SHA-256, and correlation token) **and** queries Telegram Saved Messages live via `findBackupByCorrelationToken` to confirm the remote document still exists. After user confirmation, MediaStore reconciliation marks `localUri = NULL` and `syncState = CLOUD_ONLY` while preserving all Telegram IDs, SHA-256, and thumbnails."
+
+---
+
+## Cloud Viewing & On-Demand Restore (`Phase 4.2`)
+
+### 36. Why does PhotX resolve `TdApi.GetMessage` before downloading a cloud-only original instead of using the saved `telegram_file_id`?
+> "TDLib's integer `file.id` is a local SQLite row identifier that can become stale or be reassigned if TDLib's local database isn't flushed on process kill or is rebuilt. Calling `TdApi.GetMessage(chatId, messageId)` fetches the authoritative remote message, re-verifies the Saved Messages chat, authenticated sender, `#photx v1` correlation token, and SHA-256, and returns the current session's live document `file.id` before calling `TdApi.DownloadFile`."
+
+### 37. How does PhotX verify integrity and keep temporary viewer cache separate from permanent device storage?
+> "When a user opens a `CLOUD_ONLY` photo, `TdlibBackupGateway.downloadVerifiedOriginalDocument` downloads the full document into TDLib storage and streams it with a 64 KiB buffer into a `.part` file while computing SHA-256. Only if the byte count and SHA-256 match Room's stored digest is the `.part` file atomically renamed to `cacheDir/viewer_originals/<id>.orig`; any mismatch deletes `.part` and surfaces an error. Because `cacheDir/viewer_originals` is app-private temporary cache, `local_uri` stays `NULL` and `sync_state` stays `CLOUD_ONLY` until the user explicitly taps **Restore to device**, which copies the verified bytes into `MediaStore.Images.Media.EXTERNAL_CONTENT_URI` (`IS_PENDING = 1 -> 0`) and updates the existing Room row to `SYNCED` without creating duplicates."
