@@ -25,35 +25,22 @@ private const val STOP_TIMEOUT_MS = 5_000L
 public sealed interface CloudOriginalUiState {
     public data object Idle : CloudOriginalUiState
 
-    public data class Downloading(
-        public val downloadedBytes: Long = 0L,
-        public val totalBytes: Long = 0L
-    ) : CloudOriginalUiState
+    public data class Downloading(public val downloadedBytes: Long = 0L, public val totalBytes: Long = 0L) :
+        CloudOriginalUiState
 
-    public data class Ready(
-        public val cachedFilePath: String,
-        public val fromCache: Boolean
-    ) : CloudOriginalUiState
+    public data class Ready(public val cachedFilePath: String, public val fromCache: Boolean) : CloudOriginalUiState
 
-    public data class Failed(
-        public val message: String,
-        public val isIntegrityError: Boolean
-    ) : CloudOriginalUiState
+    public data class Failed(public val message: String, public val isIntegrityError: Boolean) : CloudOriginalUiState
 }
 
 @Immutable
 public sealed interface CloudRestoreUiState {
     public data object Idle : CloudRestoreUiState
 
-    public data class Restoring(
-        public val downloadedBytes: Long = 0L,
-        public val totalBytes: Long = 0L
-    ) : CloudRestoreUiState
+    public data class Restoring(public val downloadedBytes: Long = 0L, public val totalBytes: Long = 0L) :
+        CloudRestoreUiState
 
-    public data class Completed(
-        public val restoredUri: String,
-        public val fileName: String
-    ) : CloudRestoreUiState
+    public data class Completed(public val restoredUri: String, public val fileName: String) : CloudRestoreUiState
 
     public data class Failed(public val message: String) : CloudRestoreUiState
 }

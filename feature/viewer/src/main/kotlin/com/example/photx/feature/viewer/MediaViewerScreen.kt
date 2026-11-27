@@ -310,10 +310,7 @@ private fun ZoomableImagePage(
 }
 
 @Composable
-private fun CloudOriginalStatusOverlay(
-    cloudOriginalState: CloudOriginalUiState,
-    onRetry: () -> Unit
-) {
+private fun CloudOriginalStatusOverlay(cloudOriginalState: CloudOriginalUiState, onRetry: () -> Unit) {
     val spacing = PhotxTheme.spacing
     val glass = PhotxTheme.glass
     Surface(
@@ -476,7 +473,9 @@ private fun CloudRestoreBar(
         }
 
         is CloudRestoreUiState.Completed -> "Restored to device: ${restoreState.fileName}"
+
         is CloudRestoreUiState.Failed -> "Restore failed: ${restoreState.message}"
+
         CloudRestoreUiState.Idle -> when (cloudOriginalState) {
             is CloudOriginalUiState.Ready -> if (cloudOriginalState.fromCache) {
                 "Verified original (cached)"
