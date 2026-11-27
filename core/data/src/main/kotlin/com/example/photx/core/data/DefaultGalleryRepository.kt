@@ -432,25 +432,7 @@ internal class DefaultGalleryRepository(
             }
             val gateway = telegramBackupGateway
                 ?: return@withContext Outcome.Failure(AppError.Unexpected("Telegram backup gateway is unavailable."))
-            val liveThumbId = if (item.telegramChatId != null && item.telegramMessageId != null) {
-                when (
-                    val resolved = gateway.resolveThumbnailFileId(
-                        chatId = item.telegramChatId!!,
-                        messageId = item.telegramMessageId!!
-                    )
-                ) {
-                    is Outcome.Success -> resolved.value?.also { freshId ->
-                        if (freshId != item.telegramThumbFileId) {
-                            mediaDao.updateTelegramThumbFileId(id, freshId)
-                        }
-                    }
-
-                    is Outcome.Failure -> null
-                }
-            } else {
-                null
-            }
-            val thumbFileId = liveThumbId ?: item.telegramThumbFileId
+            val thumbFileId = resolveLiveThumbnailFileId(gateway, item) ?: item.telegramThumbFileId
                 ?: return@withContext Outcome.Failure(
                     AppError.Io("No remote Telegram thumbnail available for $id.")
                 )
@@ -467,6 +449,21 @@ internal class DefaultGalleryRepository(
             }
         }
 
+    private suspend fun resolveLiveThumbnailFileId(gateway: TelegramBackupGateway, item: MediaItemEntity): Int? {
+        val chatId = item.telegramChatId
+        val messageId = item.telegramMessageId
+        val resolved = if (chatId != null && messageId != null) {
+            gateway.resolveThumbnailFileId(chatId, messageId) as? Outcome.Success
+        } else {
+            null
+        }
+        return resolved?.value?.also { freshId ->
+            if (freshId != item.telegramThumbFileId) {
+                mediaDao.updateTelegramThumbFileId(item.id, freshId)
+            }
+        }
+    }
+
     override suspend fun prepareCloudOriginalForViewer(
         id: String,
         onProgress: (CloudDownloadProgress) -> Unit
@@ -478,44 +475,27 @@ internal class DefaultGalleryRepository(
                 AppError.Validation("On-demand cloud viewing currently supports images only.")
             )
         }
-        val expectedSha256 = item.sha256?.takeIf { it.isNotBlank() }
-            ?: return@withContext Outcome.Failure(
-                AppError.Validation("Cloud item is missing expected SHA-256 metadata.")
-            )
-        val chatId = item.telegramChatId?.takeIf { it != 0L }
-            ?: return@withContext Outcome.Failure(AppError.Validation("Missing Telegram chat ID."))
-        val messageId = item.telegramMessageId?.takeIf { it > 0L }
-            ?: return@withContext Outcome.Failure(AppError.Validation("Missing Telegram message ID."))
-        val correlationToken = item.uploadCorrelationToken?.takeIf { it.isNotBlank() }
-            ?: return@withContext Outcome.Failure(AppError.Validation("Missing correlation token."))
         val cacheDir = restoreCacheDir
             ?: return@withContext Outcome.Failure(AppError.Io("Viewer restore cache directory is not configured."))
         val cachedFile = File(cacheDir, "$id.orig")
-        if (isValidCachedOriginal(cachedFile, expectedSha256, item.sizeBytes)) {
+        val request = buildOriginalDownloadRequest(item, cachedFile)
+            ?: return@withContext Outcome.Failure(
+                AppError.Validation("Cloud item is missing Telegram reference or SHA-256 metadata.")
+            )
+        if (isValidCachedOriginal(cachedFile, request.expectedSha256, item.sizeBytes)) {
             return@withContext Outcome.Success(
                 CloudOriginalResolution(
                     itemId = id,
                     cachedFilePath = cachedFile.absolutePath,
-                    sha256 = expectedSha256,
+                    sha256 = request.expectedSha256,
                     byteCount = cachedFile.length(),
                     fromCache = true
                 )
             )
         }
-        if (cachedFile.exists()) {
-            cachedFile.delete()
-        }
+        if (cachedFile.exists()) cachedFile.delete()
         val gateway = telegramBackupGateway
             ?: return@withContext Outcome.Failure(AppError.Unexpected("Telegram backup gateway is unavailable."))
-        val request = TelegramOriginalDownloadRequest(
-            chatId = chatId,
-            messageId = messageId,
-            correlationToken = correlationToken,
-            expectedSha256 = expectedSha256,
-            expectedFileName = item.fileName,
-            expectedByteCount = item.sizeBytes.takeIf { it > 0L },
-            destinationPath = cachedFile.absolutePath
-        )
         when (val result = gateway.downloadVerifiedOriginalDocument(request, onProgress)) {
             is TelegramOriginalDownloadResult.Verified -> Outcome.Success(
                 CloudOriginalResolution(
@@ -527,10 +507,34 @@ internal class DefaultGalleryRepository(
                 )
             )
 
-            is TelegramOriginalDownloadResult.IntegrityFailed ->
-                Outcome.Failure(AppError.Validation(result.reason))
+            is TelegramOriginalDownloadResult.IntegrityFailed -> Outcome.Failure(AppError.Validation(result.reason))
 
             is TelegramOriginalDownloadResult.Failed -> Outcome.Failure(result.error)
+        }
+    }
+
+    private fun buildOriginalDownloadRequest(
+        item: MediaItemEntity,
+        cachedFile: File
+    ): TelegramOriginalDownloadRequest? {
+        val sha = item.sha256?.takeIf { it.isNotBlank() }
+        val chatId = item.telegramChatId?.takeIf { it != 0L }
+        val messageId = item.telegramMessageId?.takeIf { it > 0L }
+        val token = item.uploadCorrelationToken?.takeIf { it.isNotBlank() }
+        val hasIdentity = sha != null && token != null
+        val hasTelegramRef = chatId != null && messageId != null
+        return if (hasIdentity && hasTelegramRef) {
+            TelegramOriginalDownloadRequest(
+                chatId = chatId!!,
+                messageId = messageId!!,
+                correlationToken = token!!,
+                expectedSha256 = sha!!,
+                expectedFileName = item.fileName,
+                expectedByteCount = item.sizeBytes.takeIf { it > 0L },
+                destinationPath = cachedFile.absolutePath
+            )
+        } else {
+            null
         }
     }
 
@@ -576,15 +580,10 @@ internal class DefaultGalleryRepository(
         expectedSha256: String,
         expectedByteCount: Long
     ): Boolean {
-        if (!cachedFile.isFile || !cachedFile.canRead() || cachedFile.length() <= 0L) {
-            return false
-        }
-        if (expectedByteCount > 0L && cachedFile.length() != expectedByteCount) {
-            return false
-        }
-        val restorer = mediaStoreRestorer
-        val actualSha = if (restorer != null) {
-            (restorer.computeFileSha256(cachedFile) as? Outcome.Success)?.value
+        val sizeValid = expectedByteCount <= 0L || cachedFile.length() == expectedByteCount
+        val fileReady = cachedFile.isFile && cachedFile.canRead() && cachedFile.length() > 0L && sizeValid
+        val actualSha = if (fileReady) {
+            (mediaStoreRestorer?.computeFileSha256(cachedFile) as? Outcome.Success)?.value
         } else {
             null
         }
