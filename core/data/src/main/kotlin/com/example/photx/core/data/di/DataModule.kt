@@ -18,12 +18,12 @@ import com.example.photx.core.domain.gallery.ActiveUploadRegistry
 import com.example.photx.core.domain.gallery.GalleryRepository
 import com.example.photx.core.media.MediaStoreRestorer
 import com.example.photx.core.media.di.PhotxMediaServices
-import java.io.File
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
 import dagger.hilt.android.qualifiers.ApplicationContext
 import dagger.hilt.components.SingletonComponent
+import java.io.File
 import javax.inject.Singleton
 
 /**
