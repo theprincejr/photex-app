@@ -10,10 +10,13 @@ import com.example.photx.core.common.Outcome
 import com.example.photx.core.data.GalleryPagingRepository
 import com.example.photx.core.domain.auth.AuthRepository
 import com.example.photx.core.domain.auth.AuthState
+import com.example.photx.core.domain.backup.BackupScheduler
+import com.example.photx.core.domain.gallery.ActiveUploadRegistry
 import com.example.photx.core.domain.gallery.GalleryMediaItem
 import com.example.photx.core.domain.gallery.GalleryRepository
 import com.example.photx.core.domain.gallery.ObserveGalleryTimelineUseCase
 import com.example.photx.core.domain.gallery.RefreshLocalMediaUseCase
+import com.example.photx.core.model.SyncState
 import com.example.photx.core.ui.PhotxAlbumCardUiModel
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.LocalDate
@@ -36,11 +39,14 @@ private const val STOP_TIMEOUT_MS = 5_000L
  * album grouping, Room backup counts, and local search.
  */
 @HiltViewModel
+@Suppress("TooManyFunctions")
 public class GalleryViewModel @Inject constructor(
     private val galleryRepository: GalleryRepository,
     pagingRepository: GalleryPagingRepository,
     observeTimelineUseCase: ObserveGalleryTimelineUseCase,
     private val refreshLocalMediaUseCase: RefreshLocalMediaUseCase,
+    private val backupScheduler: BackupScheduler,
+    activeUploadRegistry: ActiveUploadRegistry,
     authRepository: AuthRepository
 ) : ViewModel() {
     private val localState = MutableStateFlow(
@@ -86,9 +92,10 @@ public class GalleryViewModel @Inject constructor(
     public val uiState: StateFlow<GalleryUiState> = combine(
         localState,
         observeTimelineUseCase.observeTotalCount(),
-        recentItems,
+        galleryRepository.observeBackupStatusCounts(),
+        activeUploadRegistry.observeExecutionState(),
         authRepository.authState
-    ) { local, totalCount, items, authState ->
+    ) { local, totalCount, backupCounts, executionState, authState ->
         val accountLabel = (authState as? AuthState.Authenticated)
             ?.accountDisplayLabel
             ?.takeIf { it.isNotBlank() }
@@ -102,7 +109,11 @@ public class GalleryViewModel @Inject constructor(
             isSelectionMode = local.isSelectionMode,
             searchQuery = local.searchQuery,
             accountLabel = accountLabel,
-            backupSummary = computeBackupSummary(items = items, totalCount = totalCount)
+            backupSummary = backupCounts.toUiState(),
+            backupExecutionState = executionState,
+            backupFeedbackMessage = local.backupFeedbackMessage,
+            backupErrorMessage = local.backupErrorMessage,
+            pendingDeleteUris = local.pendingDeleteUris
         )
     }.stateIn(
         scope = viewModelScope,
@@ -160,12 +171,150 @@ public class GalleryViewModel @Inject constructor(
         localState.update { it.copy(searchQuery = query) }
     }
 
+    public fun clearBackupMessages() {
+        localState.update { it.copy(backupFeedbackMessage = null, backupErrorMessage = null) }
+    }
+
+    public fun ensureCloudThumbnail(itemId: String) {
+        viewModelScope.launch {
+            galleryRepository.ensureCloudThumbnail(itemId)
+        }
+    }
+
+    public fun discoverCloudMedia() {
+        viewModelScope.launch {
+            when (val result = galleryRepository.discoverCloudOnlyMedia()) {
+                is Outcome.Success -> {
+                    val s = result.value
+                    localState.update {
+                        it.copy(
+                            backupErrorMessage = null,
+                            backupFeedbackMessage = "Cloud sync: ${s.discoveredCount} PhotX backup(s), " +
+                                "${s.insertedCloudOnlyCount} new cloud-only."
+                        )
+                    }
+                }
+
+                is Outcome.Failure -> localState.update {
+                    it.copy(backupFeedbackMessage = null, backupErrorMessage = result.error.message)
+                }
+            }
+        }
+    }
+
+    public fun requestVerifiedLocalDeletion() {
+        val currentIds = localState.value.selectedIds
+        if (currentIds.isEmpty()) {
+            localState.update {
+                it.copy(backupErrorMessage = "Select at least one backed-up item to remove its local copy.")
+            }
+            return
+        }
+        viewModelScope.launch {
+            val recentById = recentItems.value.associateBy { it.id }
+            val verifiedUris = mutableListOf<String>()
+            var firstFailure: String? = null
+            currentIds.forEach { id ->
+                val item = recentById[id] ?: galleryRepository.getMediaById(id)
+                val uri = item?.localUri
+                if (uri != null) {
+                    when (val verified = galleryRepository.verifyRemoteBackupForDeletion(id)) {
+                        is Outcome.Success -> verifiedUris.add(uri)
+                        is Outcome.Failure -> if (firstFailure == null) firstFailure = verified.error.message
+                    }
+                }
+            }
+            if (verifiedUris.isEmpty()) {
+                localState.update {
+                    it.copy(
+                        backupFeedbackMessage = null,
+                        backupErrorMessage =
+                            firstFailure ?: "Selected items are not verified in Telegram Saved Messages."
+                    )
+                }
+            } else {
+                localState.update { it.copy(pendingDeleteUris = verifiedUris, backupErrorMessage = null) }
+            }
+        }
+    }
+
+    public fun onLocalDeletionResult(confirmed: Boolean) {
+        localState.update {
+            it.copy(
+                pendingDeleteUris = emptyList(),
+                selectedIds = if (confirmed) emptySet() else it.selectedIds,
+                isSelectionMode = if (confirmed) false else it.isSelectionMode,
+                backupFeedbackMessage = if (confirmed) "Local copy removed; cloud-only backup preserved." else null
+            )
+        }
+        if (confirmed) {
+            refreshPermissionsAndMedia()
+        }
+    }
+
+    public fun queueSelectedForBackup() {
+        val currentIds = localState.value.selectedIds
+        if (currentIds.isEmpty()) {
+            localState.update {
+                it.copy(
+                    backupFeedbackMessage = null,
+                    backupErrorMessage = "Select at least one local photo or video to back up."
+                )
+            }
+            return
+        }
+        viewModelScope.launch {
+            val recentById = recentItems.value.associateBy { it.id }
+            val eligibleIds = currentIds.mapNotNull { id ->
+                val item = recentById[id] ?: galleryRepository.getMediaById(id)
+                item?.takeIf { it.localUri != null && it.syncState in ELIGIBLE_BACKUP_STATES }?.id
+            }
+            if (eligibleIds.isEmpty()) {
+                localState.update {
+                    it.copy(
+                        selectedIds = emptySet(),
+                        isSelectionMode = false,
+                        backupErrorMessage = null,
+                        backupFeedbackMessage = "Selected media is already backed up or queued."
+                    )
+                }
+                return@launch
+            }
+            runCatching { backupScheduler.enqueueBackup(eligibleIds) }
+                .onSuccess {
+                    localState.update {
+                        it.copy(
+                            selectedIds = emptySet(),
+                            isSelectionMode = false,
+                            backupErrorMessage = null,
+                            backupFeedbackMessage = "Queued ${eligibleIds.size} item(s) for backup."
+                        )
+                    }
+                }
+                .onFailure { error ->
+                    localState.update {
+                        it.copy(
+                            backupFeedbackMessage = null,
+                            backupErrorMessage = error.message ?: "Unable to schedule backup."
+                        )
+                    }
+                }
+        }
+    }
+
     private data class LocalMutableState(
         val permissionState: com.example.photx.core.domain.gallery.MediaPermissionState,
         val isRefreshing: Boolean = false,
         val refreshErrorMessage: String? = null,
         val selectedIds: Set<String> = emptySet(),
         val isSelectionMode: Boolean = false,
-        val searchQuery: String = ""
+        val searchQuery: String = "",
+        val backupFeedbackMessage: String? = null,
+        val backupErrorMessage: String? = null,
+        val pendingDeleteUris: List<String> = emptyList()
     )
+
+    private companion object {
+        val ELIGIBLE_BACKUP_STATES: Set<SyncState> = setOf(SyncState.LOCAL_ONLY, SyncState.FAILED)
+    }
 }

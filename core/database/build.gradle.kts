@@ -7,6 +7,10 @@ plugins {
 android {
     namespace = "com.example.photx.core.database"
 
+    sourceSets {
+        getByName("test").assets.directories.add("$projectDir/schemas")
+    }
+
     testOptions {
         unitTests {
             isIncludeAndroidResources = true

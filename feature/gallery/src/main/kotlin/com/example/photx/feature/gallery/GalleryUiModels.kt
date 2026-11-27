@@ -1,6 +1,8 @@
 package com.example.photx.feature.gallery
 
 import androidx.compose.runtime.Immutable
+import com.example.photx.core.domain.gallery.BackupExecutionState
+import com.example.photx.core.domain.gallery.BackupStatusCounts
 import com.example.photx.core.domain.gallery.GalleryMediaItem
 import com.example.photx.core.domain.gallery.MediaPermissionState
 import com.example.photx.core.model.MediaType
@@ -59,8 +61,17 @@ public data class BackupSummaryUiState(
     public val uploadingCount: Int = 0,
     public val syncedCount: Int = 0,
     public val cloudOnlyCount: Int = 0,
-    public val failedCount: Int = 0
-)
+    public val failedCount: Int = 0,
+    public val waitingForReconciliationCount: Int = 0
+) {
+    public val hasAnyBackupActivity: Boolean
+        get() = queuedCount > 0 ||
+            uploadingCount > 0 ||
+            syncedCount > 0 ||
+            cloudOnlyCount > 0 ||
+            failedCount > 0 ||
+            waitingForReconciliationCount > 0
+}
 
 /**
  * Top-level UI state for the Gallery, Albums, Backup, and Search tabs.
@@ -75,7 +86,22 @@ public data class GalleryUiState(
     public val isSelectionMode: Boolean = false,
     public val searchQuery: String = "",
     public val accountLabel: String? = null,
-    public val backupSummary: BackupSummaryUiState = BackupSummaryUiState()
+    public val backupSummary: BackupSummaryUiState = BackupSummaryUiState(),
+    public val backupExecutionState: BackupExecutionState = BackupExecutionState.Idle,
+    public val backupFeedbackMessage: String? = null,
+    public val backupErrorMessage: String? = null,
+    public val pendingDeleteUris: List<String> = emptyList()
+)
+
+internal fun BackupStatusCounts.toUiState(): BackupSummaryUiState = BackupSummaryUiState(
+    totalCount = totalCount,
+    localOnlyCount = localOnlyCount,
+    queuedCount = queuedCount,
+    uploadingCount = uploadingCount,
+    syncedCount = syncedCount,
+    cloudOnlyCount = cloudOnlyCount,
+    failedCount = failedCount,
+    waitingForReconciliationCount = waitingForReconciliationCount
 )
 
 internal fun GalleryMediaItem.toTileUiModel(): PhotxMediaTileUiModel = PhotxMediaTileUiModel(

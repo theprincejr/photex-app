@@ -30,6 +30,11 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
+private const val V1_MEDIA_COLUMNS =
+    "id, sha256, local_uri, local_thumb_path, media_type, telegram_chat_id, " +
+        "telegram_message_id, telegram_file_id, telegram_thumb_file_id, file_name, " +
+        "mime_type, size_bytes, width, height, duration_ms, taken_at, sync_state"
+
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [35])
 class MediaDaoTest {
@@ -215,7 +220,7 @@ class MediaDaoTest {
                     localDiscovery(id = "u-3", localUri = "content://media/external/images/media/53", takenAt = 3_000L)
                 )
                 db.execSQL(
-                    "INSERT INTO media_items VALUES (" +
+                    "INSERT INTO media_items ($V1_MEDIA_COLUMNS) VALUES (" +
                         "'raw-dup-uri', NULL, 'content://media/external/images/media/53', NULL, 'IMAGE', " +
                         "NULL, NULL, NULL, NULL, 'x.jpg', 'image/jpeg', 1, 1, 1, 0, 1, 'LOCAL_ONLY')"
                 )
@@ -224,7 +229,7 @@ class MediaDaoTest {
 
             val duplicateTelegramRefThrew = runCatching {
                 db.execSQL(
-                    "INSERT INTO media_items VALUES (" +
+                    "INSERT INTO media_items ($V1_MEDIA_COLUMNS) VALUES (" +
                         "'raw-dup-tg', NULL, NULL, NULL, 'IMAGE', 10, 1, NULL, NULL, " +
                         "'y.jpg', 'image/jpeg', 1, 1, 1, 0, 1, 'SYNCED')"
                 )
@@ -236,17 +241,17 @@ class MediaDaoTest {
     fun `given missing individual backup fields_when markCloudOnlyIfVerified_then returns typed failure`() = runTest {
         val db = database.openHelper.writableDatabase
         db.execSQL(
-            "INSERT INTO media_items VALUES (" +
+            "INSERT INTO media_items ($V1_MEDIA_COLUMNS) VALUES (" +
                 "'no-sha', NULL, 'content://media/1', NULL, 'IMAGE', 10, 100, NULL, NULL, " +
                 "'a.jpg', 'image/jpeg', 10, 10, 10, 0, 10, 'SYNCED')"
         )
         db.execSQL(
-            "INSERT INTO media_items VALUES (" +
+            "INSERT INTO media_items ($V1_MEDIA_COLUMNS) VALUES (" +
                 "'no-chat', 'sha-a', 'content://media/2', NULL, 'IMAGE', NULL, 101, NULL, NULL, " +
                 "'b.jpg', 'image/jpeg', 10, 10, 10, 0, 10, 'SYNCED')"
         )
         db.execSQL(
-            "INSERT INTO media_items VALUES (" +
+            "INSERT INTO media_items ($V1_MEDIA_COLUMNS) VALUES (" +
                 "'no-msg', 'sha-b', 'content://media/3', NULL, 'IMAGE', 10, NULL, NULL, NULL, " +
                 "'c.jpg', 'image/jpeg', 10, 10, 10, 0, 10, 'SYNCED')"
         )
@@ -460,12 +465,12 @@ class MediaDaoTest {
 
         val db = database.openHelper.writableDatabase
         db.execSQL(
-            "INSERT INTO media_items VALUES (" +
+            "INSERT INTO media_items ($V1_MEDIA_COLUMNS) VALUES (" +
                 "'zero-chat', 'sha-z', 'content://z/1', NULL, 'IMAGE', 0, 10, NULL, NULL, " +
                 "'z1.jpg', 'image/jpeg', 1, 1, 1, 0, 1, 'SYNCED')"
         )
         db.execSQL(
-            "INSERT INTO media_items VALUES (" +
+            "INSERT INTO media_items ($V1_MEDIA_COLUMNS) VALUES (" +
                 "'blank-sha', '   ', 'content://z/2', NULL, 'IMAGE', 10, 11, NULL, NULL, " +
                 "'z2.jpg', 'image/jpeg', 1, 1, 1, 0, 1, 'SYNCED')"
         )
@@ -529,7 +534,7 @@ class MediaDaoTest {
         // Backed-up FAILED row (e.g., failed restore) must NEVER be deleted by deleteUnbackedLocalRecord.
         val db = database.openHelper.writableDatabase
         db.execSQL(
-            "INSERT INTO media_items VALUES (" +
+            "INSERT INTO media_items ($V1_MEDIA_COLUMNS) VALUES (" +
                 "'backed-failed', 'sha-bf', 'content://bf/1', NULL, 'IMAGE', 10, 88, NULL, NULL, " +
                 "'bf.jpg', 'image/jpeg', 1, 1, 1, 0, 1, 'FAILED')"
         )

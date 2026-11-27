@@ -8,10 +8,15 @@ build-logic/**/build/
 
 # Local configuration & secrets
 local.properties
+signing.properties
 *.keystore
 *.jks
+*.p12
+*.pk8
 google-services.json
 secrets.properties
+*.apk
+SHA256SUMS.txt
 
 # Android Studio / IntelliJ IDEA
 .idea/

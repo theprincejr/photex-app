@@ -1,9 +1,13 @@
 package com.example.photx.feature.gallery
 
 import android.Manifest
+import android.app.Activity
+import android.net.Uri
 import android.os.Build
+import android.provider.MediaStore
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -34,10 +38,12 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -52,6 +58,7 @@ import androidx.paging.compose.itemContentType
 import androidx.paging.compose.itemKey
 import com.example.photx.core.designsystem.PhotxTheme
 import com.example.photx.core.domain.gallery.MediaPermissionState
+import com.example.photx.core.model.SyncState
 import com.example.photx.core.ui.PhotxDateHeader
 import com.example.photx.core.ui.PhotxEmptyState
 import com.example.photx.core.ui.PhotxErrorState
@@ -94,6 +101,23 @@ public fun PhotosRoute(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
+    val context = LocalContext.current
+    val deleteLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartIntentSenderForResult()
+    ) { result ->
+        viewModel.onLocalDeletionResult(result.resultCode == Activity.RESULT_OK)
+    }
+    LaunchedEffect(uiState.pendingDeleteUris) {
+        val uris = uiState.pendingDeleteUris
+        if (uris.isNotEmpty() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val intentSender = MediaStore.createDeleteRequest(
+                context.contentResolver,
+                uris.map(Uri::parse)
+            ).intentSender
+            deleteLauncher.launch(IntentSenderRequest.Builder(intentSender).build())
+        }
+    }
+
     BackHandler(enabled = uiState.isSelectionMode) {
         viewModel.clearSelection()
     }
@@ -111,6 +135,10 @@ public fun PhotosRoute(
         onEnterSelectionMode = viewModel::enterSelectionMode,
         onSelectAll = viewModel::selectAllVisible,
         onClearSelection = viewModel::clearSelection,
+        onBackupSelected = viewModel::queueSelectedForBackup,
+        onFreeUpSelected = viewModel::requestVerifiedLocalDeletion,
+        onEnsureCloudThumbnail = viewModel::ensureCloudThumbnail,
+        onDismissBackupMessage = viewModel::clearBackupMessages,
         onOpenMedia = onOpenMedia,
         modifier = modifier
     )
@@ -118,7 +146,7 @@ public fun PhotosRoute(
 
 /**
  * Stateless chronological Photos screen displaying the 4-column WebP grid, date headers,
- * permission guidance, multi-select controls, and loading/empty/error states.
+ * permission guidance, multi-select controls, backup queueing, and loading/empty/error states.
  */
 @Composable
 public fun PhotosScreen(
@@ -135,7 +163,11 @@ public fun PhotosScreen(
     onSelectAll: () -> Unit,
     onClearSelection: () -> Unit,
     onOpenMedia: (String) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onBackupSelected: () -> Unit = {},
+    onFreeUpSelected: () -> Unit = {},
+    onEnsureCloudThumbnail: (String) -> Unit = {},
+    onDismissBackupMessage: () -> Unit = {}
 ) {
     val colors = PhotxTheme.colorScheme
 
@@ -153,7 +185,15 @@ public fun PhotosScreen(
             onRefresh = onRefresh,
             onEnterSelectionMode = onEnterSelectionMode,
             onSelectAll = onSelectAll,
-            onClearSelection = onClearSelection
+            onClearSelection = onClearSelection,
+            onBackupSelected = onBackupSelected,
+            onFreeUpSelected = onFreeUpSelected
+        )
+
+        BackupFeedbackBanner(
+            feedbackMessage = uiState.backupFeedbackMessage,
+            errorMessage = uiState.backupErrorMessage,
+            onDismiss = onDismissBackupMessage
         )
 
         PhotosBody(
@@ -163,6 +203,7 @@ public fun PhotosScreen(
             onRequestFullAccess = onRequestFullAccess,
             onManageSelection = onManageSelection,
             onToggleSelection = onToggleSelection,
+            onEnsureCloudThumbnail = onEnsureCloudThumbnail,
             onOpenMedia = onOpenMedia
         )
     }
@@ -177,12 +218,16 @@ private fun PhotosTopBar(
     onRefresh: () -> Unit,
     onEnterSelectionMode: () -> Unit,
     onSelectAll: () -> Unit,
-    onClearSelection: () -> Unit
+    onClearSelection: () -> Unit,
+    onBackupSelected: () -> Unit,
+    onFreeUpSelected: () -> Unit
 ) {
     if (uiState.isSelectionMode) {
         PhotosSelectionTopBar(
             selectedCount = uiState.selectedIds.size,
             onSelectAll = onSelectAll,
+            onBackupSelected = onBackupSelected,
+            onFreeUpSelected = onFreeUpSelected,
             onClearSelection = onClearSelection
         )
     } else {
@@ -198,7 +243,13 @@ private fun PhotosTopBar(
 }
 
 @Composable
-private fun PhotosSelectionTopBar(selectedCount: Int, onSelectAll: () -> Unit, onClearSelection: () -> Unit) {
+private fun PhotosSelectionTopBar(
+    selectedCount: Int,
+    onSelectAll: () -> Unit,
+    onBackupSelected: () -> Unit,
+    onFreeUpSelected: () -> Unit,
+    onClearSelection: () -> Unit
+) {
     val colors = PhotxTheme.colorScheme
     val spacing = PhotxTheme.spacing
     Row(
@@ -209,9 +260,49 @@ private fun PhotosSelectionTopBar(selectedCount: Int, onSelectAll: () -> Unit, o
         TextButton(onClick = onSelectAll) {
             Text(text = "Select All", style = PhotxTheme.typography.labelLarge, color = colors.primary)
         }
-        Text(text = "$selectedCount Selected", style = PhotxTheme.typography.titleLarge, color = colors.onBackground)
-        TextButton(onClick = onClearSelection) {
-            Text(text = "Cancel", style = PhotxTheme.typography.labelLarge, color = colors.primary)
+        Text(text = "$selectedCount Selected", style = PhotxTheme.typography.titleMedium, color = colors.onBackground)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onBackupSelected) {
+                Text(text = "Back Up", style = PhotxTheme.typography.labelLarge, color = colors.primary)
+            }
+            TextButton(onClick = onFreeUpSelected) {
+                Text(text = "Free Up", style = PhotxTheme.typography.labelLarge, color = colors.primary)
+            }
+            TextButton(onClick = onClearSelection) {
+                Text(text = "Cancel", style = PhotxTheme.typography.labelLarge, color = colors.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun BackupFeedbackBanner(feedbackMessage: String?, errorMessage: String?, onDismiss: () -> Unit) {
+    val message = errorMessage ?: feedbackMessage ?: return
+    val isError = errorMessage != null
+    val colors = PhotxTheme.colorScheme
+    val spacing = PhotxTheme.spacing
+    Surface(
+        color = if (isError) colors.errorContainer else colors.surfaceVariant,
+        modifier = Modifier.fillMaxWidth().padding(horizontal = spacing.md, vertical = spacing.xs)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = spacing.md, vertical = spacing.sm),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = message,
+                style = PhotxTheme.typography.bodyMedium,
+                color = if (isError) colors.onErrorContainer else colors.onSurface,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = onDismiss) {
+                Text(
+                    text = "Dismiss",
+                    style = PhotxTheme.typography.labelMedium,
+                    color = if (isError) colors.onErrorContainer else colors.primary
+                )
+            }
         }
     }
 }
@@ -311,6 +402,7 @@ private fun PhotosBody(
     onRequestFullAccess: () -> Unit,
     onManageSelection: () -> Unit,
     onToggleSelection: (String) -> Unit,
+    onEnsureCloudThumbnail: (String) -> Unit,
     onOpenMedia: (String) -> Unit
 ) {
     val spacing = PhotxTheme.spacing
@@ -351,6 +443,10 @@ private fun PhotosBody(
 
                 is GalleryTimelineUiModel.MediaItem -> {
                     val itemId = entry.item.id
+                    val isTdlibConnected = uiState.accountLabel != null
+                    if (entry.item.syncState == SyncState.CLOUD_ONLY && entry.item.localThumbPath == null) {
+                        LaunchedEffect(itemId, isTdlibConnected) { onEnsureCloudThumbnail(itemId) }
+                    }
                     PhotxPhotoThumbnailTile(
                         item = entry.tile,
                         isSelected = itemId in uiState.selectedIds,

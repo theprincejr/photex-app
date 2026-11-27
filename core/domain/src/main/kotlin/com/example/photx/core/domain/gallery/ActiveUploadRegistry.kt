@@ -1,5 +1,25 @@
 package com.example.photx.core.domain.gallery
 
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
+
+/**
+ * High-level durable backup execution state derived from WorkManager and Room lease/uncertainty state.
+ */
+public sealed interface BackupExecutionState {
+    public data object Idle : BackupExecutionState
+
+    public data object Queued : BackupExecutionState
+
+    public data class Running(public val activeMediaId: String? = null) : BackupExecutionState
+
+    public data class WaitingForReconciliation(public val uncertainMediaIds: List<String>) : BackupExecutionState
+
+    public data class Failed(public val reason: String? = null) : BackupExecutionState
+
+    public data object Completed : BackupExecutionState
+}
+
 /**
  * Snapshot produced by an authoritative background upload scheduler (for example WorkManager's
  * `WorkManager.getWorkInfosForUniqueWork(...)` query in Phase 3+).
@@ -41,4 +61,6 @@ public sealed interface ActiveUploadSnapshot {
  */
 public fun interface ActiveUploadRegistry {
     public suspend fun queryActiveUploads(): ActiveUploadSnapshot
+
+    public fun observeExecutionState(): Flow<BackupExecutionState> = flowOf(BackupExecutionState.Idle)
 }

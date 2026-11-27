@@ -38,22 +38,29 @@ class MediaViewerScreenTest {
             syncState = SyncState.CLOUD_ONLY
         )
 
+        var restoreRequested = false
         composeRule.setContent {
             PhotxTheme {
                 MediaViewerScreen(
                     uiState = MediaViewerUiState(
                         items = listOf(item),
                         initialIndex = 0,
-                        isLoading = false
+                        isLoading = false,
+                        restoreStates = mapOf(
+                            item.id to CloudRestoreUiState.Completed(
+                                restoredUri = "content://media/external/images/media/1",
+                                fileName = item.fileName
+                            )
+                        )
                     ),
-                    onBack = {}
+                    onBack = {},
+                    onRestoreToDevice = { restoreRequested = true }
                 )
             }
         }
 
         composeRule.onNodeWithText("Cloud Only").assertIsDisplayed()
-        composeRule.onNodeWithText("Restore Original").assertIsDisplayed().performClick()
-        composeRule.onNodeWithText("Cloud restore from Telegram activates in Phase 5.").assertIsDisplayed()
+        composeRule.onNodeWithText("Restored to device: orchid_macro.jpg").assertIsDisplayed()
         composeRule.onNodeWithContentDescription("Media info").performClick()
         composeRule.onNodeWithText("orchid_macro.jpg").assertIsDisplayed()
         composeRule.onNodeWithText("4032 × 3024").assertIsDisplayed()

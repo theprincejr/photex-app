@@ -154,3 +154,101 @@ Phase 2 Increment 2B introduces local MediaStore discovery, bounded-memory WebP 
 - **Positive:** `:core:domain` remains framework-free and trivial to test; `Paging 3` works end-to-end from Room to future `:feature:gallery` without polluting domain models; partial photo permissions cannot silently wipe gallery records.
 - **Negative / Trade-offs:** Phase 2C `:feature:gallery` consumes both `:core:domain` use cases and `:core:data`'s `GalleryPagingRepository` (or a small paging interface).
 
+---
+
+## ADR-005: Sequential WorkManager Backup Orchestration & Global Upload Execution Lease
+
+**Status:** Proposed (Phase 3 Design Review)  
+**Date:** 2026-11-26
+
+### Context
+
+Phase 3 uploads local photos and videos (`20 MB`–`2 GB+`) to Telegram Saved Messages in the background. Running parallel uploads risks `OutOfMemoryError`, TDLib flood-wait (`429`) throttling, redundant temporary file staging, and battery/thermal exhaustion.
+A subtle scheduling hazard also exists with `ExistingWorkPolicy.KEEP`: if a finishing worker reads `0` `QUEUED` rows *just before* a caller marks a new item `QUEUED` and invokes `enqueueUniqueWork("photx_sequential_backup", ExistingWorkPolicy.KEEP, ...)`, `WorkManager` sees the exiting worker still in `RUNNING` and silently drops the new request—stranding the newly queued item indefinitely.
+
+### Decision
+
+1. **Lost-Wakeup Prevention & Scheduling Strategy:**
+   - Enqueue unique work `"photx_sequential_backup"` using `ExistingWorkPolicy.KEEP` **paired with a mandatory post-lease tail check** (or `ExistingWorkPolicy.APPEND_OR_REPLACE` when explicitly nudged): right after releasing the global execution lease in `finally`, the exiting worker queries `SyncStateDao.countQueued()`. If `countQueued() > 0`, it schedules a fresh `ExistingWorkPolicy.APPEND_OR_REPLACE` continuation before returning `Result.success()`.
+   - Because `APPEND_OR_REPLACE` chains a successor onto the finishing work, no `QUEUED` item can ever be stranded in the race window.
+2. **Room-Backed Global Upload Execution Lease (`backup_execution_lease`):**
+   - `ActiveUploadRegistry` is an execution-state and recovery mechanism—**not** the sole concurrency guard.
+   - Room enforces global mutual exclusion via a singleton `backup_execution_lease` row (`id = 1`, `owner_worker_id`, `active_media_id`, `acquired_at_ms`, `expires_at_ms`). A worker may only proceed after winning an atomic compare-and-swap lease acquisition (`WHERE id = 1 AND (owner_worker_id IS NULL OR expires_at_ms <= :nowMs)`).
+   - Long uploads renew `expires_at_ms` periodically; `finally` releases the lease (`owner_worker_id = NULL`) **only** when `owner_worker_id == currentWorkerId` and **after** any uncertain-send flag is durably persisted.
+3. **`WorkInfo.State` Mapping in `WorkManagerActiveUploadRegistry`:**
+   - `RUNNING`: Read `ACTIVE_MEDIA_ID` from `WorkInfo.progress`; if non-blank, emit `Authoritative(setOf(mediaId), nowMs)`, else `Authoritative(emptySet(), nowMs)` (starting up).
+   - `ENQUEUED` / `BLOCKED`: No worker is executing `doWork()`, so emit `Authoritative(emptySet(), nowMs)` (backing off / awaiting network or battery constraint).
+   - `SUCCEEDED` / `FAILED` / `CANCELLED`: Emit `Authoritative(emptySet(), nowMs)`.
+   - Query exception or uninitialized `WorkManager`: Emit `ActiveUploadSnapshot.Unavailable`.
+4. **Transient Retry & Backoff:**
+   - `Result.retry()` uses `BackoffPolicy.EXPONENTIAL` (`30s` base). Pre-send transient errors leave the item `QUEUED`; uncertain post-send outcomes keep `UPLOADING` with `upload_attempt_uncertain = 1` until reconciled.
+
+### Consequences
+
+- **Positive:** Eliminates the `ExistingWorkPolicy.KEEP` lost-wakeup race; enforces strict `<= 1` active upload via SQLite lease even if two workers overlap briefly during OS restarts; clean `WorkInfo` state mapping.
+- **Negative / Trade-offs:** Serialized throughput by design; requires a Room `1 -> 2` schema migration for `backup_execution_lease`.
+
+---
+
+## ADR-006: Single-Pass Streaming Stage-and-Hash & Atomic Deduplication
+
+**Status:** Proposed (Phase 3 Design Review)  
+**Date:** 2026-11-26
+
+### Context
+
+Because TDLib's `InputFileLocal` requires a filesystem path rather than an Android `content://` URI, PhotX must stage the active upload file in app-private storage (`filesDir/upload_staging/`). Hashing the `content://` stream separately from staging would read the file twice (doubling I/O on multi-gigabyte videos) and create a TOCTOU window where an edited source file's hash wouldn't match the staged bytes actually sent to TDLib.
+
+### Decision
+
+1. **Single-Pass Streaming Stage-and-Hash (`:core:media`):**
+   - `UploadFileStager.stageAndHash(itemId, sourceUri, expectedSizeBytes)`:
+     1. Check `StatFs(stagingDir)` available bytes `>= max(expectedSizeBytes, 0L) + 50 MiB` (`52_428_800` bytes headroom). Fail cleanly with `AppError.Io` if insufficient.
+     2. Open `ContentResolver.openInputStream(uri)` and stream through a fixed `64 KiB` (`65_536` bytes) buffer into `filesDir/upload_staging/<itemId>.part.<nanos>`, updating `MessageDigest.getInstance("SHA-256")` on **every chunk in the same pass** with `coroutineContext.ensureActive()` cancellation checks.
+     3. Validate `bytesCopied > 0` (and `bytesCopied == expectedSizeBytes` when `expectedSizeBytes > 0`), `flush()` + `fd.sync()`, and atomically move `.part.<nanos>` → `<itemId>.staged` (`ATOMIC_MOVE` with `REPLACE_EXISTING` fallback).
+     4. Delete `.part.<nanos>` in `finally` on any failure/cancellation; sweep orphan `.part.*` and stale `.staged` files at worker boot.
+   - **Invariant:** The persisted `sha256` digest **always** matches the exact bytes in `<itemId>.staged` submitted to TDLib.
+2. **Digest Persistence & Invalidation (`:core:database`):**
+   - Persist `sha256` via `SyncStateDao.recordLocalSha256` only while unsynced (`LOCAL_ONLY`, `QUEUED`, `FAILED`, `UPLOADING`). Clear `sha256 = NULL` via `clearSha256IfUnsynced` when MediaStore reconciliation detects changed `sizeBytes` or `takenAt`.
+3. **Atomic Duplicate Resolution (`SyncStateDao.linkDuplicateToCanonicalBackup`):**
+   - Inside a single `@Transaction`, query `findBackedUpBySha256(digest)`. If a canonical `SYNCED` or `CLOUD_ONLY` row exists, copy its `(telegramChatId, telegramMessageId, telegramFileId, telegramThumbFileId)` and transition the duplicate row to `SYNCED` atomically—zero duplicate Telegram upload.
+
+### Consequences
+
+- **Positive:** Single-pass I/O with `O(1)` (`64 KiB`) heap; cryptographic guarantee that staged bytes == hashed bytes; atomic duplicate linking without race windows.
+- **Negative / Trade-offs:** Staging temporarily uses disk space equal to the single active file (bounded to 1 file at a time and guarded by `50 MiB` `StatFs` headroom).
+
+---
+
+## ADR-007: Crash-Safe Correlation Token, Lossless `InputMessageDocument`, and `200`-Char Caption Budget
+
+**Status:** Proposed (Phase 3 Design Review)  
+**Date:** 2026-11-26
+
+### Context
+
+User-approved backup policy requires **100% original-quality lossless backup** (`InputMessageDocument`; `InputMessagePhoto` prohibited). If the app crashes or the network drops *after* TDLib accepts `sendMessage` (`UpdateMessageSendSucceeded` on server) but *before* Room commits `UPLOADING -> SYNCED`, a blind retry would upload a duplicate file to Saved Messages.
+
+### Decision
+
+1. **Pre-Send Stable Correlation Token & Uncertain Flag (`media_items` v2):**
+   - Before calling TDLib `sendMessage`, persist a stable unique `upload_correlation_token` (UUIDv4, indexed) and set `upload_attempt_uncertain = 1` inside Room.
+   - Only clear `upload_attempt_uncertain = 0` after `markSyncedWithTelegramRef` commits `SYNCED` **or** after `searchChatMessages` positively proves no matching message exists on Saved Messages.
+2. **TDLib Message Database & Send Lifecycle:**
+   - `SetTdlibParameters.useMessageDatabase = true` and `useChatInfoDatabase = true` (required for `searchChatMessages`) are mandatory.
+   - `sendMessage` returns a temporary local `Message.id`; the worker awaits `UpdateMessageSendSucceeded` (`oldMessageId == tempId`) to obtain the permanent server `message.id`, `chatId`, and `fileId` before committing `SYNCED`.
+3. **`200`-Character Caption Limit & Strict Recovery Validation:**
+   - Format: `#photx v1 s:<64-hex> c:<36-uuid>` (`115` chars total, strictly `<= 200` chars TDLib caption limit; filename is carried by `TdApi.InputMessageDocument` / `Document.fileName`).
+   - On recovery of any row with `upload_attempt_uncertain == 1` (or `FAILED` with a non-null `upload_correlation_token`), search Saved Messages (`searchChatMessages` for `c:<token>` / `s:<sha256>`) and validate **all five** before accepting a match:
+     1. `message.chatId == savedMessagesChatId`
+     2. `message.senderId` matches `myUserId`
+     3. `message.content` is `TdApi.MessageDocument`
+     4. Caption contains exact `c:<uploadCorrelationToken>` and `s:<sha256>`
+     5. Document size matches expected staged byte count (when `> 0`).
+   - **Never** blindly retry an upload whose `upload_attempt_uncertain == 1` before reconciliation completes.
+
+### Consequences
+
+- **Positive:** Zero duplicate Telegram uploads across process death, `WorkManager` retries, or Pause/Cancel during an in-flight send; guaranteed `<= 200`-char caption compatibility.
+- **Negative / Trade-offs:** Adds `upload_correlation_token` and `upload_attempt_uncertain` columns via Room migration `1 -> 2`.
+

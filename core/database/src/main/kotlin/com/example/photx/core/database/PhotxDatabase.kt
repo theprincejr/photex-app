@@ -8,8 +8,8 @@ import androidx.room.TypeConverters
  * Primary PhotX Room database acting as the single local source of truth (`SPEC.md` Section 7.3).
  */
 @Database(
-    entities = [MediaItemEntity::class],
-    version = 1,
+    entities = [MediaItemEntity::class, BackupExecutionLeaseEntity::class],
+    version = 2,
     exportSchema = true
 )
 @TypeConverters(PhotxTypeConverters::class)
@@ -22,4 +22,7 @@ public abstract class PhotxDatabase : RoomDatabase() {
 
     /** DAO providing batch reconciliation snapshots and unbacked local index pruning. */
     public abstract fun localReconciliationDao(): LocalReconciliationDao
+
+    /** DAO enforcing the global single-upload execution lease. */
+    public abstract fun backupLeaseDao(): BackupLeaseDao
 }

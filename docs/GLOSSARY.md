@@ -168,3 +168,58 @@ Every technical term is explained in three parts: **Simple Meaning**, **Technica
 - **Simple meaning:** Removing Android's legacy top title bar so Jetpack Compose draws cleanly behind status and navigation bars using `statusBarsPadding()` and `navigationBarsPadding()`.
 - **Technical definition:** Configuring `android:Theme.Material.NoActionBar` in `themes.xml` alongside `ComponentActivity.enableEdgeToEdge()` so `PhotxTheme` owns all chrome.
 - **Use in PhotX:** Configured in `app/src/main/res/values/themes.xml` and `MainActivity.kt`.
+
+### `InputMessageDocument` vs `InputMessagePhoto` (TDLib)
+- **Simple meaning:** "Send as File" keeps the exact untouched original photo, whereas "Send as Photo" shrinks and re-compresses it.
+- **Technical definition:** TDLib `TdApi.InputMessageDocument` transfers raw original bytes with EXIF metadata and exact SHA-256 intact, whereas `InputMessagePhoto` runs Telegram's lossy JPEG re-encoding/resizing pipeline.
+- **Use in PhotX:** `ADR-007` mandates `InputMessageDocument` for all Phase 3 backups to guarantee zero-data-loss and SHA-256-verified restores.
+
+### `#photx` Correlation & Crash-Window Reconciliation
+- **Simple meaning:** Tagging each Telegram backup with its unique fingerprint so if the phone crashes right after uploading, PhotX checks Saved Messages first instead of uploading a duplicate.
+- **Technical definition:** Embedding `#photx v1 | sha256:<hex> | corr:<token>` (persisted in `upload_correlation_token` with `upload_attempt_uncertain = 1` prior to `sendMessage`) in the `<= 200`-char Telegram document caption and querying `searchChatMessages` before retrying uncertain `UPLOADING`/`FAILED` states.
+- **Use in PhotX:** Enforces zero duplicate uploads across network drops and process death (`ADR-007`).
+
+### Single-Pass Stage-and-Hash & Global Execution Lease
+- **Simple meaning:** Computing a photo's SHA-256 fingerprint while copying it once into app-private storage so TDLib hashes and uploads the exact same bytes, while a database lock ensures only one backup worker ever uploads at a time.
+- **Technical definition:** Streaming `ContentResolver` bytes through a `64 KiB` buffer and `MessageDigest("SHA-256")` into an atomic `.part` -> `.staged` temp file (`UploadFileStager`) guarded by a `StatFs` headroom check, paired with a singleton `backup_execution_lease` Room row (`BackupLeaseDao`) and `dedup_canonical_id` atomic duplicate linking (`SyncStateDao.linkDuplicateToCanonicalBackup`).
+- **Use in PhotX:** Implemented in Phase 3 Increment 3A across `:core:media` and `:core:database` (`ADR-005`, `ADR-006`).
+
+### Gateway Pattern (`TelegramBackupGateway`) & Fencing Token
+- **Simple meaning:** A clean translator interface in `:core:domain` that lets backup logic ask "send this file" or "find this backup" without knowing anything about TDLib, paired with a rising ticket number (`fencing_token`) so an old stalled worker cannot accidentally overwrite a newer worker's lease.
+- **Technical definition:** Domain port (`TelegramBackupGateway`) decoupling `:core:domain`/`:core:data` from `TdApi` JNI classes, paired with a monotonically incremented SQLite `fencing_token` on `backup_execution_lease` (`BackupLeaseDao`) checked on every renewal and release.
+- **Use in PhotX:** Implemented in `3A`/`3B` (`TelegramBackupGateway`, `TdlibBackupGateway`, `BackupLeaseDao`).
+
+### Temporary vs Final TDLib Message ID
+- **Simple meaning:** TDLib hands you a placeholder ticket number right away when you hit Send, and only sends the real permanent Saved Messages ID later after Telegram's server confirms the upload.
+- **Technical definition:** `TdApi.SendMessage` returns a local `Message.id` (`oldMessageId`) while queued locally; only `TdApi.UpdateMessageSendSucceeded` supplies the immutable server-assigned `message.id` required before marking a record `SYNCED`.
+- **Use in PhotX:** Enforced in `TdlibBackupGateway.sendStagedDocument`, which only returns `TelegramUploadResult.Confirmed` from `UpdateMessageSendSucceeded` and maps timeouts/disconnects to `TelegramUploadResult.Uncertain`.
+
+### Durable Unique Work & Lost-Wakeup Tail Chaining (`WorkManager`)
+- **Simple meaning:** A persistent background to-do worker that survives app kills and reboots, plus a handoff check at the finish line so any photo queued right as the worker exits still gets picked up.
+- **Technical definition:** `WorkManager.enqueueUniqueWork("photx_sequential_backup", ...)` using `ExistingWorkPolicy.KEEP` during active runs and `ExistingWorkPolicy.APPEND_OR_REPLACE` when `BackupLeaseDao.releaseLeaseAndCountQueued()` sees remaining `QUEUED` items or a worker exiting without a lease.
+- **Use in PhotX:** Implemented in `WorkManagerBackupScheduler`, `SequentialBackupWorker` (`@HiltWorker`), and `WorkManagerActiveUploadRegistry` (`:core:data`, Phase 3C).
+
+### Single-Source-of-Truth Backup UI (`Room` + `WorkInfo` Observation)
+- **Simple meaning:** Instead of the UI guessing whether an upload succeeded, the screen simply watches Room's database counts and WorkManager's live worker status.
+- **Technical definition:** Combining `MediaDao.observeBackupStatusCounts()` (SQLite `Flow`) with `ActiveUploadRegistry.observeExecutionState()` (`WorkManager.getWorkInfosForUniqueWorkFlow` + `upload_attempt_uncertain`) in `GalleryViewModel` so `PhotosScreen` and `BackupScreen` stay synchronized across process restarts.
+- **Use in PhotX:** Implemented in Phase 3D across `:core:database`, `:core:data`, and `:feature:gallery`.
+
+### `InputThumbnail` & Thumbnail-Only `DownloadFile`
+- **Simple meaning:** Sending a tiny preview picture alongside the full-resolution document so PhotX can re-download just that tiny preview after cache eviction without downloading the giant original file.
+- **Technical definition:** Attaching `TdApi.InputThumbnail` (`<= 320px` JPEG) to `TdApi.InputDocument` so Telegram persists `telegram_thumb_file_id`, and calling `TdApi.DownloadFile(telegramThumbFileId)` on cache miss instead of `telegramFileId`.
+- **Use in PhotX:** Implemented in Phase 4.1 (`AndroidTdlibGateway`, `TdlibBackupGateway`, `DefaultGalleryRepository.ensureCloudThumbnail`).
+
+### `MediaStore.createDeleteRequest` (Consented Local Deletion)
+- **Simple meaning:** Asking Android to show the official system confirmation popup before removing a local photo, only after PhotX verifies the copy is safely stored in Telegram Saved Messages.
+- **Technical definition:** API 30+ `MediaStore.createDeleteRequest(ContentResolver, uris)` launched via `StartIntentSenderForResult` after `verifyRemoteBackupForDeletion` confirms both Room `SYNCED` state and live `findBackupByCorrelationToken` match.
+- **Use in PhotX:** Implemented in `GalleryViewModel.requestVerifiedLocalDeletion` and `PhotosRoute` (Phase 4.1).
+
+### Temporary Viewer Cache vs. Permanent `MediaStore` Storage
+- **Simple meaning:** Keeping a temporary private copy inside the app's cache folder just so you can pinch-zoom a cloud photo, without putting it back into your phone's public gallery or marking it "restored to device" yet.
+- **Technical definition:** App-private `cacheDir/viewer_originals/<id>.orig` populated atomically via `.part` staging and streaming SHA-256 verification (`prepareCloudOriginalForViewer`) while keeping `local_uri = NULL` and `sync_state = CLOUD_ONLY`, distinct from `filesDir/thumbnails/` previews and `MediaStore.Images.Media.EXTERNAL_CONTENT_URI` permanent restorations (`MediaStoreRestorer`).
+- **Use in PhotX:** Implemented in Phase 4.2 across `:core:telegram`, `:core:media`, `:core:data`, and `:feature:viewer`.
+
+### Live `TdApi.GetMessage` Document ID Resolution
+- **Simple meaning:** Asking Telegram for the message's current file ID right before downloading, because local TDLib integer file IDs can go stale across app restarts.
+- **Technical definition:** Calling `TdApi.GetMessage(chatId, messageId)` to re-verify `#photx v1` metadata, ownership, SHA-256, and extract the current session's `doc.document.id` (or `doc.thumbnail.file.id`) instead of trusting a previously persisted `telegram_file_id`.
+- **Use in PhotX:** Implemented in `AndroidTdlibGateway.getMessageDocument` / `resolveMessageThumbnailFileId` and `TdlibBackupGateway.downloadVerifiedOriginalDocument`.

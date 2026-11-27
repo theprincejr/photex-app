@@ -30,7 +30,11 @@ public data class MediaSyncSnapshot(
     val sha256: String?,
     val syncState: SyncState,
     val telegramChatId: Long?,
-    val telegramMessageId: Long?
+    val telegramMessageId: Long?,
+    val localUri: String? = null,
+    val sizeBytes: Long = 0L,
+    val uploadAttemptUncertain: Boolean = false,
+    val dedupCanonicalId: String? = null
 )
 
 /**
@@ -54,6 +58,14 @@ public sealed interface MediaStateMutationResult {
         public val existingCanonicalId: String
     ) : MediaStateMutationResult
 
+    public data class RejectedSourceModified(public val itemId: String) : MediaStateMutationResult
+
+    public data class RejectedUncertainOrActiveUpload(
+        public val itemId: String,
+        public val currentState: SyncState,
+        public val uploadAttemptUncertain: Boolean
+    ) : MediaStateMutationResult
+
     public data class StaleOrConcurrentModification(
         public val itemId: String,
         public val expectedState: SyncState,
@@ -71,11 +83,24 @@ public sealed interface MediaStateMutationResult {
 @Suppress("TooManyFunctions")
 public abstract class SyncStateDao {
     @Query(
-        "SELECT id, sha256, sync_state AS syncState, " +
-            "telegram_chat_id AS telegramChatId, telegram_message_id AS telegramMessageId " +
+        "SELECT id, sha256, local_uri AS localUri, size_bytes AS sizeBytes, " +
+            "sync_state AS syncState, telegram_chat_id AS telegramChatId, " +
+            "telegram_message_id AS telegramMessageId, " +
+            "upload_attempt_uncertain AS uploadAttemptUncertain, " +
+            "dedup_canonical_id AS dedupCanonicalId " +
             "FROM media_items WHERE id = :id LIMIT 1"
     )
     protected abstract suspend fun getSyncSnapshot(id: String): MediaSyncSnapshot?
+
+    @Query(
+        "SELECT * FROM media_items " +
+            "WHERE sha256 = :sha256 AND sync_state = 'SYNCED' " +
+            "AND telegram_chat_id IS NOT NULL AND telegram_chat_id != 0 " +
+            "AND telegram_message_id IS NOT NULL AND telegram_message_id > 0 " +
+            "AND dedup_canonical_id IS NULL " +
+            "LIMIT 1"
+    )
+    protected abstract suspend fun findSyncedCanonicalBySha256(sha256: String): MediaItemEntity?
 
     @Query(
         "SELECT id FROM media_items " +
@@ -88,11 +113,26 @@ public abstract class SyncStateDao {
         backedUpStates: List<SyncState> = BACKED_UP_STATES
     ): String?
 
+    @Query("SELECT * FROM media_items WHERE sync_state = 'QUEUED' ORDER BY taken_at ASC, id ASC LIMIT 1")
+    public abstract suspend fun findNextQueued(): MediaItemEntity?
+
+    @Query("SELECT COUNT(*) FROM media_items WHERE sync_state = 'QUEUED'")
+    public abstract suspend fun countQueued(): Int
+
+    @Query("SELECT * FROM media_items WHERE upload_attempt_uncertain = 1 ORDER BY taken_at ASC, id ASC")
+    public abstract suspend fun findUncertainUploads(): List<MediaItemEntity>
+
     @Query("SELECT * FROM media_items WHERE sha256 = :sha256 AND sync_state IN (:backedUpStates) LIMIT 1")
     public abstract suspend fun findBackedUpBySha256(
         sha256: String,
         backedUpStates: List<SyncState> = BACKED_UP_STATES
     ): MediaItemEntity?
+
+    @Query("UPDATE media_items SET sha256 = NULL WHERE id = :id AND sync_state IN (:unsyncedStates)")
+    public abstract suspend fun clearSha256IfUnsynced(
+        id: String,
+        unsyncedStates: List<SyncState> = UNSYNCED_HASH_MUTABLE_STATES
+    ): Int
 
     @Query(
         "UPDATE media_items SET sha256 = :sha256 " +
@@ -118,6 +158,7 @@ public abstract class SyncStateDao {
             "telegram_message_id = :messageId, " +
             "telegram_file_id = :fileId, " +
             "telegram_thumb_file_id = :thumbFileId, " +
+            "upload_attempt_uncertain = 0, " +
             "sync_state = :nextState " +
             "WHERE id = :id AND sync_state = :expectedState"
     )
@@ -131,6 +172,41 @@ public abstract class SyncStateDao {
         fileId: Int?,
         thumbFileId: Int?
     ): Int
+
+    @Query(
+        "UPDATE media_items SET " +
+            "sha256 = :sha256, " +
+            "dedup_canonical_id = :canonicalId, " +
+            "telegram_chat_id = NULL, " +
+            "telegram_message_id = NULL, " +
+            "telegram_file_id = :fileId, " +
+            "telegram_thumb_file_id = :thumbFileId, " +
+            "upload_attempt_uncertain = 0, " +
+            "sync_state = :nextState " +
+            "WHERE id = :id AND sync_state = :expectedState"
+    )
+    protected abstract suspend fun compareAndSwapDuplicateLinkedRecord(
+        id: String,
+        expectedState: SyncState,
+        nextState: SyncState,
+        sha256: String,
+        canonicalId: String,
+        fileId: Int?,
+        thumbFileId: Int?
+    ): Int
+
+    @Query(
+        "UPDATE media_items SET upload_correlation_token = :correlationToken, upload_attempt_uncertain = 1 " +
+            "WHERE id = :id AND sync_state = :expectedState"
+    )
+    protected abstract suspend fun compareAndSwapUncertainUpload(
+        id: String,
+        expectedState: SyncState,
+        correlationToken: String
+    ): Int
+
+    @Query("UPDATE media_items SET upload_attempt_uncertain = 0 WHERE id = :id")
+    public abstract suspend fun clearUncertainUploadFlag(id: String): Int
 
     @Query(
         "UPDATE media_items SET local_uri = NULL, sync_state = :nextState " +
@@ -171,7 +247,9 @@ public abstract class SyncStateDao {
     public open suspend fun markSyncedWithTelegramRef(
         id: String,
         sha256: String,
-        backupRef: TelegramBackupRef
+        backupRef: TelegramBackupRef,
+        expectedLocalUri: String? = null,
+        expectedSizeBytes: Long? = null
     ): MediaStateMutationResult {
         require(sha256.isNotBlank()) { "SHA-256 digest must not be blank when marking item SYNCED." }
         return executeValidatedTransition(
@@ -179,15 +257,19 @@ public abstract class SyncStateDao {
             targetState = SyncState.SYNCED,
             getSnapshot = ::getSyncSnapshot,
             preCheck = { current ->
+                val sourceModified = (expectedLocalUri != null && current.localUri != expectedLocalUri) ||
+                    (expectedSizeBytes != null && current.sizeBytes != expectedSizeBytes)
                 val existingCanonicalId = findCanonicalBackedUpId(sha256 = sha256, excludeId = id)
-                if (existingCanonicalId != null) {
-                    MediaStateMutationResult.RejectedDuplicateBackup(
+                when {
+                    sourceModified -> MediaStateMutationResult.RejectedSourceModified(itemId = id)
+
+                    existingCanonicalId != null -> MediaStateMutationResult.RejectedDuplicateBackup(
                         itemId = id,
                         sha256 = sha256,
                         existingCanonicalId = existingCanonicalId
                     )
-                } else {
-                    null
+
+                    else -> null
                 }
             },
             performCas = { current ->
@@ -238,6 +320,95 @@ public abstract class SyncStateDao {
         }
     )
 
+    /**
+     * Persists [correlationToken] and marks `upload_attempt_uncertain = 1` before calling TDLib
+     * `sendMessage` so crash recovery reconciles Saved Messages instead of blindly re-uploading.
+     */
+    @Transaction
+    public open suspend fun beginUncertainUpload(id: String, correlationToken: String): MediaStateMutationResult {
+        require(correlationToken.isNotBlank()) { "Correlation token must not be blank." }
+        val current = getSyncSnapshot(id)
+        return when {
+            current == null -> MediaStateMutationResult.NotFound(id)
+
+            current.syncState != SyncState.UPLOADING -> MediaStateMutationResult.StaleOrConcurrentModification(
+                itemId = id,
+                expectedState = SyncState.UPLOADING,
+                actualState = current.syncState
+            )
+
+            compareAndSwapUncertainUpload(id, SyncState.UPLOADING, correlationToken) == 1 ->
+                MediaStateMutationResult.Applied(from = SyncState.UPLOADING, to = SyncState.UPLOADING)
+
+            else -> MediaStateMutationResult.StaleOrConcurrentModification(
+                itemId = id,
+                expectedState = SyncState.UPLOADING,
+                actualState = getSyncSnapshot(id)?.syncState
+            )
+        }
+    }
+
+    /**
+     * Atomically and idempotently resolves a duplicate local copy against an already-`SYNCED`
+     * canonical row sharing [sha256], linking via `dedup_canonical_id` while preserving
+     * `idx_media_telegram_msg` uniqueness and rejecting uncertain or actively uploading records.
+     */
+    @Transaction
+    public open suspend fun linkDuplicateToCanonicalBackup(id: String, sha256: String): MediaStateMutationResult {
+        require(sha256.isNotBlank()) { "SHA-256 digest must not be blank for deduplication." }
+        val current = getSyncSnapshot(id) ?: return MediaStateMutationResult.NotFound(id)
+        val canonical = findSyncedCanonicalBySha256(sha256 = sha256)
+        return when {
+            current.uploadAttemptUncertain || current.syncState == SyncState.UPLOADING ->
+                MediaStateMutationResult.RejectedUncertainOrActiveUpload(
+                    itemId = id,
+                    currentState = current.syncState,
+                    uploadAttemptUncertain = current.uploadAttemptUncertain
+                )
+
+            canonical == null ->
+                MediaStateMutationResult.RejectedMissingBackupMetadata(
+                    itemId = id,
+                    currentState = current.syncState
+                )
+
+            current.isAlreadyLinkedToCanonical(sha256, canonical.id) ->
+                MediaStateMutationResult.Applied(from = SyncState.SYNCED, to = SyncState.SYNCED)
+
+            current.syncState !in DEDUP_ELIGIBLE_STATES ->
+                MediaStateMutationResult.RejectedTransition(
+                    SyncStateTransitionResult.Rejected(
+                        from = current.syncState,
+                        to = SyncState.SYNCED,
+                        allowedStates = current.syncState.allowedNextStates()
+                    )
+                )
+
+            compareAndSwapDuplicateLinkedRecord(
+                id = id,
+                expectedState = current.syncState,
+                nextState = SyncState.SYNCED,
+                sha256 = sha256,
+                canonicalId = canonical.id,
+                fileId = canonical.telegramFileId,
+                thumbFileId = canonical.telegramThumbFileId
+            ) == 1 ->
+                MediaStateMutationResult.Applied(from = current.syncState, to = SyncState.SYNCED)
+
+            else ->
+                MediaStateMutationResult.StaleOrConcurrentModification(
+                    itemId = id,
+                    expectedState = current.syncState,
+                    actualState = getSyncSnapshot(id)?.syncState
+                )
+        }
+    }
+
+    private fun MediaSyncSnapshot.isAlreadyLinkedToCanonical(sha256: String, canonicalId: String): Boolean =
+        syncState == SyncState.SYNCED &&
+            this.sha256 == sha256 &&
+            (dedupCanonicalId == canonicalId || id == canonicalId)
+
     @Query("SELECT id FROM media_items WHERE sync_state = :syncState")
     protected abstract suspend fun findIdsBySyncState(syncState: SyncState): List<String>
 
@@ -272,6 +443,11 @@ public abstract class SyncStateDao {
             SyncState.LOCAL_ONLY,
             SyncState.QUEUED,
             SyncState.UPLOADING,
+            SyncState.FAILED
+        )
+        val DEDUP_ELIGIBLE_STATES: Set<SyncState> = setOf(
+            SyncState.LOCAL_ONLY,
+            SyncState.QUEUED,
             SyncState.FAILED
         )
     }
