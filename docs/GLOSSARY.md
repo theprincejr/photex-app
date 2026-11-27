@@ -223,3 +223,8 @@ Every technical term is explained in three parts: **Simple Meaning**, **Technica
 - **Simple meaning:** Asking Telegram for the message's current file ID right before downloading, because local TDLib integer file IDs can go stale across app restarts.
 - **Technical definition:** Calling `TdApi.GetMessage(chatId, messageId)` to re-verify `#photx v1` metadata, ownership, SHA-256, and extract the current session's `doc.document.id` (or `doc.thumbnail.file.id`) instead of trusting a previously persisted `telegram_file_id`.
 - **Use in PhotX:** Implemented in `AndroidTdlibGateway.getMessageDocument` / `resolveMessageThumbnailFileId` and `TdlibBackupGateway.downloadVerifiedOriginalDocument`.
+
+### R8 Minification & ProGuard Keep Rules for JNI (`org.drinkless.tdlib`)
+- **Simple meaning:** Shrinking and optimizing the app's Kotlin/Java bytecode for release while telling the optimizer not to rename or strip C++ TDLib bridge classes.
+- **Technical definition:** Enabling `isMinifyEnabled = true` and `isShrinkResources = true` in `release` with `-keep class org.drinkless.tdlib.** { *; }` so JNI native callbacks (`Client.ResultHandler`, `TdApi.*`) retain exact names and signatures.
+- **Use in PhotX:** Configured in `app/build.gradle.kts` and `app/proguard-rules.pro` for `v0.1.0-beta.1`.

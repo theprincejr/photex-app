@@ -1,6 +1,6 @@
 # PhotX Project Progress
 
-## Current Milestone: Phase 4.2 Implemented & Emulator-Verified (Cloud Photo Viewing & On-Demand Restore)
+## Current Milestone: PhotX 0.1.0 Beta 1 (`v0.1.0-beta.1`) Released
 
 | Phase | Target Version | Status | Summary |
 |---|---|---|---|
@@ -14,6 +14,11 @@
 | **Phase 6 — Performance & Release Validation** | `v1.0.0` | Not Started | Baseline Profiles, R8 release build, Macrobenchmark/Perfetto measurements, security review |
 
 ---
+
+## Completed & Verified Work (Release `v0.1.0-beta.1`)
+- **PR #7 Merged (`0392a55`):** Merged `feat/phase3-sequential-auto-backup` into `main` after passing GitHub Actions CI.
+- **Release Signing & R8 (`app/build.gradle.kts`, `app/proguard-rules.pro`):** Enabled `isMinifyEnabled = true`, `isShrinkResources = true`, `isDebuggable = false`, TDLib/Room/Hilt-WorkManager ProGuard keep rules, and environment-variable-backed release signing (`photx-beta.jks`).
+- **Release Verification:** `spotlessCheck`, `detekt`, `129/129` unit tests across `34` suites (plus pure-JVM `:core:common:test`, `:core:model:test`, `:core:domain:test`), `lintRelease`, and `:app:assembleRelease` passed. See [0.1.0-beta.1.md](file:///C:/Users/harik/Videos/Projects/PhotX/docs/releases/0.1.0-beta.1.md).
 
 ## Completed & Verified Work (Session 16 — Phase 4.2: Cloud Photo Viewing & On-Demand Restore)
 - **Live Remote Resolution & Verified Download (`:core:domain`, `:core:telegram`):** Added `downloadVerifiedOriginalDocument` to `TelegramBackupGateway`/`TdlibBackupGateway` and `getMessageDocument` + `downloadTelegramFileWithProgress` (`UpdateFile` progress & `CancelDownloadFile` cancellation) to `AndroidTdlibGateway`. Validates Saved Messages chat, authenticated sender, `#photx v1` token, SHA-256, and size via live `TdApi.GetMessage`, resolves the live document `file.id`, stages to `.part` with 64 KiB streaming SHA-256 verification, and atomically promotes to `cacheDir/viewer_originals/<id>.orig`.
