@@ -1,3 +1,5 @@
+@file:Suppress("TooManyFunctions")
+
 package com.example.photx.feature.viewer
 
 import android.net.Uri
@@ -274,38 +276,48 @@ private fun ZoomableImagePage(
         contentAlignment = Alignment.Center
     ) {
         if (verifiedOriginalModel != null) {
-            AsyncImage(
-                model = ImageRequest.Builder(LocalContext.current)
-                    .data(verifiedOriginalModel)
-                    .build(),
-                contentDescription = item.fileName,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer(
-                        scaleX = scale,
-                        scaleY = scale,
-                        translationX = offset.x,
-                        translationY = offset.y
-                    )
-            )
+            ZoomableAsyncImage(verifiedOriginalModel, item.fileName, scale, offset)
         } else {
-            // Show dimmed thumbnail preview only behind explicit downloading/error state (never as full-res).
-            val previewThumb = item.localThumbPath?.let(::File)
-            if (previewThumb != null) {
-                AsyncImage(
-                    model = ImageRequest.Builder(LocalContext.current).data(previewThumb).build(),
-                    contentDescription = null,
-                    contentScale = ContentScale.Fit,
-                    alpha = PREVIEW_DIM_ALPHA,
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
-            CloudOriginalStatusOverlay(
-                cloudOriginalState = cloudOriginalState,
-                onRetry = onRetry
+            CloudPreviewPlaceholder(item.localThumbPath, cloudOriginalState, onRetry)
+        }
+    }
+}
+
+@Composable
+private fun ZoomableAsyncImage(model: Any, contentDescription: String, scale: Float, offset: Offset) {
+    AsyncImage(
+        model = ImageRequest.Builder(LocalContext.current).data(model).build(),
+        contentDescription = contentDescription,
+        contentScale = ContentScale.Fit,
+        modifier = Modifier
+            .fillMaxSize()
+            .graphicsLayer(
+                scaleX = scale,
+                scaleY = scale,
+                translationX = offset.x,
+                translationY = offset.y
+            )
+    )
+}
+
+@Composable
+private fun CloudPreviewPlaceholder(
+    localThumbPath: String?,
+    cloudOriginalState: CloudOriginalUiState,
+    onRetry: () -> Unit
+) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        val previewThumb = localThumbPath?.let(::File)
+        if (previewThumb != null) {
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current).data(previewThumb).build(),
+                contentDescription = null,
+                contentScale = ContentScale.Fit,
+                alpha = PREVIEW_DIM_ALPHA,
+                modifier = Modifier.fillMaxSize()
             )
         }
+        CloudOriginalStatusOverlay(cloudOriginalState = cloudOriginalState, onRetry = onRetry)
     }
 }
 
@@ -464,28 +476,7 @@ private fun CloudRestoreBar(
 ) {
     val spacing = PhotxTheme.spacing
     val syncColors = PhotxTheme.syncColors
-    val notice = when (restoreState) {
-        is CloudRestoreUiState.Restoring -> if (restoreState.totalBytes > 0L) {
-            "Restoring to device… ${formatBytes(restoreState.downloadedBytes)} / " +
-                formatBytes(restoreState.totalBytes)
-        } else {
-            "Restoring to device…"
-        }
-
-        is CloudRestoreUiState.Completed -> "Restored to device: ${restoreState.fileName}"
-
-        is CloudRestoreUiState.Failed -> "Restore failed: ${restoreState.message}"
-
-        CloudRestoreUiState.Idle -> when (cloudOriginalState) {
-            is CloudOriginalUiState.Ready -> if (cloudOriginalState.fromCache) {
-                "Verified original (cached)"
-            } else {
-                "Verified original ready"
-            }
-
-            else -> null
-        }
-    }
+    val notice = buildRestoreNotice(cloudOriginalState, restoreState)
 
     Column(
         modifier = Modifier
@@ -518,17 +509,31 @@ private fun CloudRestoreBar(
                 Icon(imageVector = Icons.Rounded.CloudDownload, contentDescription = null)
                 Spacer(modifier = Modifier.padding(horizontal = spacing.xxs))
                 Text(
-                    text = if (restoreState is CloudRestoreUiState.Restoring) {
-                        "Restoring…"
-                    } else {
-                        "Restore to device"
-                    },
+                    text = if (restoreState is CloudRestoreUiState.Restoring) "Restoring…" else "Restore to device",
                     style = PhotxTheme.typography.labelLarge
                 )
             }
         }
     }
 }
+
+private fun buildRestoreNotice(cloudOriginalState: CloudOriginalUiState, restoreState: CloudRestoreUiState): String? =
+    when (restoreState) {
+        is CloudRestoreUiState.Restoring -> if (restoreState.totalBytes > 0L) {
+            "Restoring to device… ${formatBytes(restoreState.downloadedBytes)} / " +
+                formatBytes(restoreState.totalBytes)
+        } else {
+            "Restoring to device…"
+        }
+
+        is CloudRestoreUiState.Completed -> "Restored to device: ${restoreState.fileName}"
+
+        is CloudRestoreUiState.Failed -> "Restore failed: ${restoreState.message}"
+
+        CloudRestoreUiState.Idle -> (cloudOriginalState as? CloudOriginalUiState.Ready)?.let {
+            if (it.fromCache) "Verified original (cached)" else "Verified original ready"
+        }
+    }
 
 @Composable
 private fun MetadataInfoSheet(item: GalleryMediaItem) {
