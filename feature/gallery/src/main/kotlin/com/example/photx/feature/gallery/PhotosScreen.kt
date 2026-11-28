@@ -444,8 +444,15 @@ private fun PhotosBody(
                 is GalleryTimelineUiModel.MediaItem -> {
                     val itemId = entry.item.id
                     val isTdlibConnected = uiState.accountLabel != null
-                    if (entry.item.syncState == SyncState.CLOUD_ONLY && entry.item.localThumbPath == null) {
-                        LaunchedEffect(itemId, isTdlibConnected) { onEnsureCloudThumbnail(itemId) }
+                    val thumbPath = entry.item.localThumbPath
+                    val hasUsableThumb = !thumbPath.isNullOrBlank() &&
+                        java.io.File(thumbPath).let { it.isFile && it.length() > 0L }
+                    if (!hasUsableThumb &&
+                        (entry.item.syncState == SyncState.CLOUD_ONLY || entry.item.localUri != null)
+                    ) {
+                        LaunchedEffect(itemId, isTdlibConnected, thumbPath) {
+                            onEnsureCloudThumbnail(itemId)
+                        }
                     }
                     PhotxPhotoThumbnailTile(
                         item = entry.tile,

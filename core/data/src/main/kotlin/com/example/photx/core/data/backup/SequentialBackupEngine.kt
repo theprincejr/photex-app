@@ -1,6 +1,7 @@
 package com.example.photx.core.data.backup
 
 import com.example.photx.core.database.BackupLeaseDao
+import com.example.photx.core.database.FolderBackupDao
 import com.example.photx.core.database.LeaseAcquisitionResult
 import com.example.photx.core.database.MediaItemEntity
 import com.example.photx.core.database.MediaStateMutationResult
@@ -12,6 +13,7 @@ import com.example.photx.core.domain.backup.TelegramBackupUploadRequest
 import com.example.photx.core.domain.backup.TelegramReconciliationResult
 import com.example.photx.core.domain.backup.TelegramUploadResult
 import com.example.photx.core.media.UploadFileStager
+import com.example.photx.core.model.QueueOrigin
 import com.example.photx.core.model.SyncState
 import java.util.UUID
 import javax.inject.Inject
@@ -36,21 +38,24 @@ internal class SequentialBackupEngine(
     private val uploadFileStager: UploadFileStager,
     private val telegramBackupGateway: TelegramBackupGateway,
     private val nowMsProvider: () -> Long = { System.currentTimeMillis() },
-    private val tokenGenerator: () -> String = { UUID.randomUUID().toString() }
+    private val tokenGenerator: () -> String = { UUID.randomUUID().toString() },
+    private val folderBackupDao: FolderBackupDao? = null
 ) {
     @Inject
     constructor(
         syncStateDao: SyncStateDao,
         backupLeaseDao: BackupLeaseDao,
         uploadFileStager: UploadFileStager,
-        telegramBackupGateway: TelegramBackupGateway
+        telegramBackupGateway: TelegramBackupGateway,
+        folderBackupDao: FolderBackupDao
     ) : this(
         syncStateDao = syncStateDao,
         backupLeaseDao = backupLeaseDao,
         uploadFileStager = uploadFileStager,
         telegramBackupGateway = telegramBackupGateway,
         nowMsProvider = { System.currentTimeMillis() },
-        tokenGenerator = { UUID.randomUUID().toString() }
+        tokenGenerator = { UUID.randomUUID().toString() },
+        folderBackupDao = folderBackupDao
     )
 
     suspend fun runSequentialDrain(workerId: String, tailReschedule: suspend () -> Unit = {}): BackupDrainOutcome {
@@ -159,6 +164,11 @@ internal class SequentialBackupEngine(
         return when {
             !renewed -> BackupDrainOutcome.RetryLater("Lost lease fencing before processing ${item.id}.")
 
+            shouldSkipDisabledFolderAutoItem(item) -> {
+                syncStateDao.revertDisabledFolderAutoItem(item.id)
+                BackupDrainOutcome.Drained
+            }
+
             syncStateDao.transitionSyncState(
                 id = item.id,
                 targetState = SyncState.UPLOADING,
@@ -171,6 +181,16 @@ internal class SequentialBackupEngine(
             }
 
             else -> stageAndProcessItem(workerId, fencingToken, item, sourceUri)
+        }
+    }
+
+    private suspend fun shouldSkipDisabledFolderAutoItem(item: MediaItemEntity): Boolean {
+        val dao = folderBackupDao
+        val folderId = item.folderId
+        return when {
+            item.queueOrigin != QueueOrigin.FOLDER_AUTO || dao == null -> false
+            folderId == null -> true
+            else -> dao.isFolderAutoBackupEnabled(folderId) != true
         }
     }
 

@@ -2,6 +2,7 @@ package com.example.photx.core.database
 
 import androidx.room.TypeConverter
 import com.example.photx.core.model.MediaType
+import com.example.photx.core.model.QueueOrigin
 import com.example.photx.core.model.SyncState
 
 /**
@@ -19,4 +20,10 @@ internal class PhotxTypeConverters {
 
     @TypeConverter
     fun toMediaType(value: String): MediaType = MediaType.valueOf(value)
+
+    @TypeConverter
+    fun fromQueueOrigin(value: QueueOrigin): String = value.name
+
+    @TypeConverter
+    fun toQueueOrigin(value: String): QueueOrigin = QueueOrigin.valueOf(value)
 }

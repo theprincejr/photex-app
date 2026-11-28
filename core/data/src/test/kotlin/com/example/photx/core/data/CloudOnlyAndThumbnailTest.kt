@@ -16,6 +16,7 @@ import com.example.photx.core.domain.backup.TelegramBackupUploadRequest
 import com.example.photx.core.domain.backup.TelegramConfirmedBackup
 import com.example.photx.core.domain.backup.TelegramDiscoveryPage
 import com.example.photx.core.domain.backup.TelegramReconciliationResult
+import com.example.photx.core.domain.backup.TelegramThumbnailSource
 import com.example.photx.core.domain.backup.TelegramUploadResult
 import com.example.photx.core.domain.gallery.ActiveUploadRegistry
 import com.example.photx.core.domain.gallery.ActiveUploadSnapshot
@@ -237,11 +238,48 @@ class CloudOnlyAndThumbnailTest {
             assertTrue(880 !in gateway.downloadedThumbIds)
         }
 
+    @Test
+    fun `given stale thumb and expired tdlib id_when ensuring thumb_then resolves live and mini`() = runTest {
+        val staleFile = File(thumbDir, "stale.webp").apply { writeBytes(byteArrayOf(1)) }
+        db.openHelper.writableDatabase.execSQL(
+            "INSERT INTO media_items (id, local_uri, local_thumb_path, media_type, file_name, mime_type, " +
+                "size_bytes, width, height, duration_ms, taken_at, sha256, sync_state, telegram_chat_id, " +
+                "telegram_message_id, telegram_file_id, telegram_thumb_file_id, upload_correlation_token) " +
+                "VALUES ('c-stale', NULL, '${staleFile.absolutePath}', 'IMAGE', 'old.jpg', 'image/jpeg', " +
+                "2048, 100, 100, 0, 1000, '${"b".repeat(64)}', 'CLOUD_ONLY', 42, 9001, 500, 111, 'tok-stale')"
+        )
+        staleFile.delete()
+
+        // Live message returns fresh thumb ID 999 instead of expired 111.
+        gateway.liveThumbnailSource = TelegramThumbnailSource(thumbnailFileId = 999)
+        val resolved = repo.ensureCloudThumbnail("c-stale")
+        assertTrue(resolved is Outcome.Success)
+        assertEquals(listOf(999), gateway.downloadedThumbIds)
+        assertEquals(999, db.mediaDao().getById("c-stale")?.telegramThumbFileId)
+
+        // Evict thumb and simulate older Phase 3 doc with no document thumbnail, only minithumbnail bytes.
+        File((resolved as Outcome.Success).value).delete()
+        gateway.liveThumbnailSource = TelegramThumbnailSource(
+            thumbnailFileId = null,
+            minithumbnailBytes = byteArrayOf(7, 8, 9)
+        )
+        val miniResult = repo.ensureCloudThumbnail("c-stale")
+        assertTrue(miniResult is Outcome.Success)
+        assertTrue((miniResult as Outcome.Success).value.endsWith(".mini.jpg"))
+
+        // When both live thumbnail ID and minithumbnail are absent, fails cleanly without touching doc 500.
+        File(miniResult.value).delete()
+        gateway.liveThumbnailSource = TelegramThumbnailSource(thumbnailFileId = null, minithumbnailBytes = null)
+        assertTrue(repo.ensureCloudThumbnail("c-stale") is Outcome.Failure)
+        assertTrue(500 !in gateway.downloadedThumbIds)
+    }
+
     private class FakeCloudGateway : TelegramBackupGateway {
         var remoteMatch: TelegramConfirmedBackup? = null
         var discoveryPages: List<TelegramDiscoveryPage> = emptyList()
         val downloadedThumbIds = mutableListOf<Int>()
         var shouldFailThumbDownload = false
+        var liveThumbnailSource: TelegramThumbnailSource? = null
 
         override suspend fun sendStagedDocument(request: TelegramBackupUploadRequest): TelegramUploadResult =
             TelegramUploadResult.DefiniteFailure(AppError.Io("Unused"))
@@ -259,6 +297,14 @@ class CloudOnlyAndThumbnailTest {
             limit: Int
         ): Outcome<TelegramDiscoveryPage, AppError> =
             Outcome.Success(discoveryPages.firstOrNull() ?: TelegramDiscoveryPage(emptyList(), 0L, 0))
+
+        override suspend fun resolveThumbnailSource(
+            chatId: Long,
+            messageId: Long,
+            correlationToken: String?,
+            expectedSha256: String?
+        ): Outcome<TelegramThumbnailSource?, AppError> =
+            Outcome.Success(liveThumbnailSource ?: TelegramThumbnailSource(thumbnailFileId = 881))
 
         override suspend fun downloadThumbnail(
             telegramThumbFileId: Int,

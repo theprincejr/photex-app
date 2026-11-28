@@ -22,7 +22,8 @@ public data class LocalTrackedSnapshot(
     val height: Int,
     val durationMs: Long,
     val takenAt: Long,
-    val syncState: SyncState
+    val syncState: SyncState,
+    val folderId: String? = null
 )
 
 /**
@@ -41,7 +42,7 @@ public abstract class LocalReconciliationDao {
         "SELECT id, local_uri AS localUri, local_thumb_path AS localThumbPath, " +
             "media_type AS mediaType, file_name AS fileName, mime_type AS mimeType, " +
             "size_bytes AS sizeBytes, width, height, duration_ms AS durationMs, " +
-            "taken_at AS takenAt, sync_state AS syncState " +
+            "taken_at AS takenAt, sync_state AS syncState, folder_id AS folderId " +
             "FROM media_items WHERE local_uri IS NOT NULL"
     )
     public abstract suspend fun getLocalTrackedSnapshots(): List<LocalTrackedSnapshot>

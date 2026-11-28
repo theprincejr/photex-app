@@ -14,6 +14,7 @@ import com.example.photx.core.domain.backup.TelegramDiscoveryPage
 import com.example.photx.core.domain.backup.TelegramOriginalDownloadRequest
 import com.example.photx.core.domain.backup.TelegramOriginalDownloadResult
 import com.example.photx.core.domain.backup.TelegramReconciliationResult
+import com.example.photx.core.domain.backup.TelegramThumbnailSource
 import com.example.photx.core.domain.backup.TelegramUploadResult
 import java.io.File
 import java.io.FileInputStream
@@ -143,6 +144,51 @@ internal class TdlibBackupGateway(
                 transport.resolveMessageThumbnailFileId(chatId, messageId)
             }
         }
+
+    override suspend fun resolveThumbnailSource(
+        chatId: Long,
+        messageId: Long,
+        correlationToken: String?,
+        expectedSha256: String?
+    ): Outcome<TelegramThumbnailSource?, AppError> = withContext(dispatcherProvider.io) {
+        if (chatId == 0L || messageId <= 0L) {
+            return@withContext Outcome.Success(null)
+        }
+        val (userId, savedChatId) = when (val ctx = resolveSavedMessagesContext()) {
+            is Outcome.Success -> ctx.value
+            is Outcome.Failure -> return@withContext ctx
+        }
+        if (chatId != savedChatId) {
+            return@withContext Outcome.Failure(AppError.Validation("Remote chat ID does not match Saved Messages."))
+        }
+        val candidate = when (val msgOutcome = transport.getMessageDocument(chatId, messageId)) {
+            is Outcome.Failure -> return@withContext msgOutcome
+            is Outcome.Success -> msgOutcome.value
+        }
+        val verified = if (!correlationToken.isNullOrBlank() && !expectedSha256.isNullOrBlank()) {
+            validateCandidate(
+                candidate = candidate,
+                expectedChatId = savedChatId,
+                expectedUserId = userId,
+                correlationToken = correlationToken,
+                expectedSha256 = expectedSha256,
+                expectedFileName = null,
+                expectedByteCount = null
+            ) != null
+        } else {
+            candidate.senderUserId == userId
+        }
+        if (!verified) {
+            Outcome.Failure(AppError.Validation("Live Telegram message failed thumbnail metadata validation."))
+        } else {
+            Outcome.Success(
+                TelegramThumbnailSource(
+                    thumbnailFileId = candidate.telegramThumbFileId,
+                    minithumbnailBytes = candidate.minithumbnailBytes
+                )
+            )
+        }
+    }
 
     override suspend fun downloadVerifiedOriginalDocument(
         request: TelegramOriginalDownloadRequest,

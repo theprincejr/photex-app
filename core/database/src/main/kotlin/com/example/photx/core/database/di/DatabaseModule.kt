@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import com.example.photx.core.database.BackupLeaseDao
+import com.example.photx.core.database.FolderBackupDao
 import com.example.photx.core.database.LocalReconciliationDao
 import com.example.photx.core.database.MediaDao
 import com.example.photx.core.database.PhotxDatabase
@@ -41,12 +42,15 @@ public object DatabaseModule {
         PhotxDatabase::class.java,
         DATABASE_NAME
     )
-        .addMigrations(PhotxDatabaseMigrations.MIGRATION_1_2)
+        .addMigrations(PhotxDatabaseMigrations.MIGRATION_1_2, PhotxDatabaseMigrations.MIGRATION_2_3)
         .setJournalMode(RoomDatabase.JournalMode.WRITE_AHEAD_LOGGING)
         .build()
 
     @Provides
     public fun provideBackupLeaseDao(database: PhotxDatabase): BackupLeaseDao = database.backupLeaseDao()
+
+    @Provides
+    public fun provideFolderBackupDao(database: PhotxDatabase): FolderBackupDao = database.folderBackupDao()
 
     @Provides
     public fun provideMediaDao(database: PhotxDatabase): MediaDao = database.mediaDao()

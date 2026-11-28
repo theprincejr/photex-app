@@ -161,4 +161,32 @@ class CloudViewerViewModelAndScreenTest {
         assertTrue(retried)
         assertTrue(restored)
     }
+
+    @Test
+    fun `given missing ready file on disk_when rendered_then shows retry overlay instead of black screen`() {
+        val item = cloudItem()
+        var retried = false
+        composeRule.setContent {
+            PhotxTheme {
+                MediaViewerScreen(
+                    uiState = MediaViewerUiState(
+                        items = listOf(item),
+                        initialIndex = 0,
+                        isLoading = false,
+                        cloudOriginalStates = mapOf(
+                            item.id to CloudOriginalUiState.Ready(
+                                cachedFilePath = "/nonexistent/path/missing.orig",
+                                fromCache = false
+                            )
+                        )
+                    ),
+                    onBack = {},
+                    onRetryCloudOriginal = { retried = true }
+                )
+            }
+        }
+        composeRule.onNodeWithText("Download failed").assertIsDisplayed()
+        composeRule.onNodeWithText("Retry").performClick()
+        assertTrue(retried)
+    }
 }

@@ -32,4 +32,28 @@ public object PhotxDatabaseMigrations {
             )
         }
     }
+
+    public val MIGRATION_2_3: Migration = object : Migration(2, 3) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE media_items ADD COLUMN folder_id TEXT")
+            db.execSQL(
+                "ALTER TABLE media_items ADD COLUMN queue_origin TEXT NOT NULL DEFAULT 'MANUAL'"
+            )
+            db.execSQL(
+                "CREATE INDEX IF NOT EXISTS idx_media_folder_id " +
+                    "ON media_items (folder_id)"
+            )
+            db.execSQL(
+                "CREATE TABLE IF NOT EXISTS folder_backup_preferences (" +
+                    "folder_id TEXT NOT NULL PRIMARY KEY, " +
+                    "display_name TEXT NOT NULL, " +
+                    "relative_path TEXT NOT NULL, " +
+                    "volume_name TEXT NOT NULL, " +
+                    "auto_backup_enabled INTEGER NOT NULL DEFAULT 0, " +
+                    "discovered_at INTEGER NOT NULL, " +
+                    "updated_at INTEGER NOT NULL" +
+                    ")"
+            )
+        }
+    }
 }

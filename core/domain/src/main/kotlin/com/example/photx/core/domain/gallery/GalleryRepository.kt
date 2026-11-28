@@ -52,16 +52,17 @@ public data class BackupStatusCounts(
 )
 
 /**
- * Extensible folder filter defining which MediaStore relative paths are scanned automatically.
+ * Extensible folder filter defining which MediaStore relative paths are scanned.
+ * An empty [relativePathPrefixes] set ([ALL]) scans all accessible device media folders.
  */
 public data class MediaScanScope(val relativePathPrefixes: Set<String> = setOf(DEFAULT_CAMERA_RELATIVE_PATH)) {
     init {
-        require(relativePathPrefixes.isNotEmpty()) { "MediaScanScope must contain at least one folder prefix." }
         require(relativePathPrefixes.all { it.isNotBlank() }) { "MediaScanScope folder prefixes must not be blank." }
     }
 
     public companion object {
         public const val DEFAULT_CAMERA_RELATIVE_PATH: String = "DCIM/Camera"
+        public val ALL: MediaScanScope = MediaScanScope(emptySet())
     }
 }
 
@@ -95,6 +96,16 @@ public interface GalleryRepository {
     /** Emits live Room synchronization and reconciliation counts across all indexed media. */
     public fun observeBackupStatusCounts(): Flow<BackupStatusCounts> = flowOf(BackupStatusCounts())
 
+    /** Emits discovered device media folders along with backup counts and auto-backup toggle state. */
+    public fun observeDeviceFolders(): Flow<List<DeviceFolderSummary>> = flowOf(emptyList())
+
+    /** Enables or disables automatic backup for [folderId] and queues/cancels eligible items. */
+    public suspend fun setFolderAutoBackupEnabled(
+        folderId: String,
+        enabled: Boolean
+    ): Outcome<FolderToggleResult, AppError> =
+        Outcome.Success(FolderToggleResult(folderId = folderId, enabled = enabled))
+
     /** Emits a bounded newest-first window of indexed [GalleryMediaItem]s from Room. */
     public fun observeRecentMedia(limit: Int = DEFAULT_WINDOW_LIMIT): Flow<List<GalleryMediaItem>>
 
@@ -109,7 +120,7 @@ public interface GalleryRepository {
      * overwriting sync/backup columns, and generates missing local WebP thumbnails.
      */
     public suspend fun refreshLocalMedia(
-        scope: MediaScanScope = MediaScanScope()
+        scope: MediaScanScope = MediaScanScope.ALL
     ): Outcome<GalleryReconcileSummary, AppError>
 
     /** Generates or returns the cached local WebP thumbnail path for item [id]. */

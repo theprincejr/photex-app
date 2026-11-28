@@ -4,6 +4,8 @@ import com.example.photx.core.common.AppError
 import com.example.photx.core.common.DispatcherProvider
 import com.example.photx.core.common.Outcome
 import com.example.photx.core.database.CloudOnlyUpsertResult
+import com.example.photx.core.database.FolderBackupDao
+import com.example.photx.core.database.FolderBackupPreferenceEntity
 import com.example.photx.core.database.LocalMediaUpsertResult
 import com.example.photx.core.database.LocalReconciliationDao
 import com.example.photx.core.database.LocalTrackedSnapshot
@@ -12,6 +14,7 @@ import com.example.photx.core.database.MediaItemEntity
 import com.example.photx.core.database.MediaStateMutationResult
 import com.example.photx.core.database.SyncStateDao
 import com.example.photx.core.database.di.PhotxMediaDaos
+import com.example.photx.core.domain.backup.BackupScheduler
 import com.example.photx.core.domain.backup.CloudDownloadProgress
 import com.example.photx.core.domain.backup.TelegramBackupGateway
 import com.example.photx.core.domain.backup.TelegramConfirmedBackup
@@ -23,6 +26,8 @@ import com.example.photx.core.domain.gallery.ActiveUploadSnapshot
 import com.example.photx.core.domain.gallery.BackupStatusCounts
 import com.example.photx.core.domain.gallery.CloudDiscoverySummary
 import com.example.photx.core.domain.gallery.CloudOriginalResolution
+import com.example.photx.core.domain.gallery.DeviceFolderSummary
+import com.example.photx.core.domain.gallery.FolderToggleResult
 import com.example.photx.core.domain.gallery.GalleryMediaItem
 import com.example.photx.core.domain.gallery.GalleryReconcileSummary
 import com.example.photx.core.domain.gallery.GalleryRepository
@@ -57,7 +62,9 @@ internal class DefaultGalleryRepository(
     private val telegramBackupGateway: TelegramBackupGateway? = null,
     private val thumbnailCacheDir: File? = null,
     private val restoreCacheDir: File? = null,
-    private val mediaStoreRestorer: MediaStoreRestorer? = null
+    private val mediaStoreRestorer: MediaStoreRestorer? = null,
+    private val folderBackupDao: FolderBackupDao? = null,
+    private val backupScheduler: BackupScheduler? = null
 ) : GalleryRepository {
     private val mediaDao: MediaDao = daos.mediaDao
     private val syncStateDao: SyncStateDao = daos.syncStateDao
@@ -82,6 +89,47 @@ internal class DefaultGalleryRepository(
 
     override fun observeRecentMedia(limit: Int): Flow<List<GalleryMediaItem>> =
         reconciliationDao.observeRecentItems(limit).map { rows -> rows.map { it.toDomain() } }
+
+    override fun observeDeviceFolders(): Flow<List<DeviceFolderSummary>> =
+        folderBackupDao?.observeFolderSummaries()?.map { rows ->
+            rows.map { row ->
+                DeviceFolderSummary(
+                    folderId = row.folderId,
+                    displayName = row.displayName,
+                    relativePath = row.relativePath,
+                    volumeName = row.volumeName,
+                    autoBackupEnabled = row.autoBackupEnabled,
+                    totalCount = row.totalCount,
+                    backedUpCount = row.backedUpCount,
+                    queuedOrUploadingCount = row.queuedOrUploadingCount,
+                    eligibleLocalCount = row.eligibleLocalCount,
+                    coverThumbPath = row.coverThumbPath,
+                    coverLocalUri = row.coverLocalUri
+                )
+            }
+        } ?: super.observeDeviceFolders()
+
+    override suspend fun setFolderAutoBackupEnabled(
+        folderId: String,
+        enabled: Boolean
+    ): Outcome<FolderToggleResult, AppError> = withContext(dispatcherProvider.io) {
+        val dao = folderBackupDao
+            ?: return@withContext Outcome.Failure(AppError.Io("Folder backup storage unavailable."))
+        val updated = dao.setAutoBackupEnabled(folderId = folderId, enabled = enabled, updatedAt = clockMillis())
+        if (updated == 0) {
+            return@withContext Outcome.Failure(AppError.Validation("Folder '$folderId' not found."))
+        }
+        if (enabled) {
+            val queuedCount = syncStateDao.queueEligibleFolderItems(folderId)
+            if (queuedCount > 0) {
+                backupScheduler?.scheduleSequentialDrain(replaceIfTail = false)
+            }
+            Outcome.Success(FolderToggleResult(folderId = folderId, enabled = true, queuedCount = queuedCount))
+        } else {
+            val cancelledCount = syncStateDao.cancelUnstartedFolderAutoItems(folderId)
+            Outcome.Success(FolderToggleResult(folderId = folderId, enabled = false, cancelledCount = cancelledCount))
+        }
+    }
 
     override suspend fun getMediaById(id: String): GalleryMediaItem? = withContext(dispatcherProvider.io) {
         mediaDao.getById(id)?.toDomain()
@@ -190,12 +238,14 @@ internal class DefaultGalleryRepository(
             unseenScanned = scannedItems.filter { it.localUri !in trackedByUri }
         )
         val appliedRebinds = applyRebinds(reboundMatches)
+        upsertDiscoveredFolders(scannedItems)
 
         val discoveryResult = reconcileScannedItems(
             scannedItems = scannedItems,
             trackedByUri = trackedByUri,
             reboundByNewUri = appliedRebinds.reboundSnapshotsByNewUri
         )
+        autoQueueEnabledFolders()
         val thumbsCreated = generateMissingOrStaleThumbnails(discoveryResult.thumbnailRequests)
         val disappearanceResult = reconcileRemainingMissingRecords(
             missingCandidates = trackedBefore.filter {
@@ -299,6 +349,48 @@ internal class DefaultGalleryRepository(
         }
 
         return ScanReconciliationAccum(inserted, updated, skipped, thumbRequests)
+    }
+
+    private suspend fun upsertDiscoveredFolders(scannedItems: List<ScannedMediaItem>) {
+        val dao = folderBackupDao ?: return
+        if (scannedItems.isEmpty()) return
+        val now = clockMillis()
+        val folders = scannedItems
+            .groupBy { it.resolvedFolderId() }
+            .map { (folderId, items) ->
+                val sample = items.first()
+                FolderBackupPreferenceEntity(
+                    folderId = folderId,
+                    displayName = sample.resolvedFolderDisplayName(),
+                    relativePath = sample.relativePath,
+                    volumeName = sample.volumeName,
+                    autoBackupEnabled = false,
+                    discoveredAt = now,
+                    updatedAt = now
+                )
+            }
+        dao.insertFoldersIfAbsent(folders)
+        folders.forEach { folder ->
+            dao.updateFolderMetadataIfChanged(
+                folderId = folder.folderId,
+                displayName = folder.displayName,
+                relativePath = folder.relativePath,
+                updatedAt = now
+            )
+        }
+    }
+
+    private suspend fun autoQueueEnabledFolders() {
+        val dao = folderBackupDao ?: return
+        val enabledFolderIds = dao.getEnabledFolderIds()
+        if (enabledFolderIds.isEmpty()) return
+        var totalQueued = 0
+        enabledFolderIds.forEach { folderId ->
+            totalQueued += syncStateDao.queueEligibleFolderItems(folderId)
+        }
+        if (totalQueued > 0) {
+            backupScheduler?.scheduleSequentialDrain(replaceIfTail = false)
+        }
     }
 
     private fun needsThumbnailGeneration(existing: LocalTrackedSnapshot?, metadataChanged: Boolean): Boolean = when {
@@ -430,37 +522,98 @@ internal class DefaultGalleryRepository(
             if (mediaServices.thumbnailGenerator.isThumbnailUsable(existingThumb) && existingThumb != null) {
                 return@withContext Outcome.Success(existingThumb)
             }
-            val gateway = telegramBackupGateway
-                ?: return@withContext Outcome.Failure(AppError.Unexpected("Telegram backup gateway is unavailable."))
-            val thumbFileId = resolveLiveThumbnailFileId(gateway, item) ?: item.telegramThumbFileId
-                ?: return@withContext Outcome.Failure(
-                    AppError.Io("No remote Telegram thumbnail available for $id.")
-                )
-            val cacheDir = thumbnailCacheDir
-                ?: return@withContext Outcome.Failure(AppError.Io("Thumbnail cache directory is not configured."))
-            val destPath = File(cacheDir, "$id.cloud.jpg").absolutePath
-            when (val result = gateway.downloadThumbnail(thumbFileId, destPath)) {
-                is Outcome.Failure -> result
-
-                is Outcome.Success -> {
-                    mediaDao.updateLocalThumbPath(id, result.value)
-                    result
+            if (existingThumb != null) {
+                mediaDao.updateLocalThumbPath(id, null)
+            }
+            item.localUri?.let { sourceUri ->
+                val localGenerated = mediaServices.thumbnailGenerator.generateThumbnail(id, sourceUri, item.mediaType)
+                if (localGenerated is Outcome.Success) {
+                    mediaDao.updateLocalThumbPath(id, localGenerated.value)
+                    return@withContext localGenerated
                 }
             }
+            resolveTelegramThumbnail(item)
         }
 
-    private suspend fun resolveLiveThumbnailFileId(gateway: TelegramBackupGateway, item: MediaItemEntity): Int? {
-        val chatId = item.telegramChatId
-        val messageId = item.telegramMessageId
-        val resolved = if (chatId != null && messageId != null) {
-            gateway.resolveThumbnailFileId(chatId, messageId) as? Outcome.Success
+    private suspend fun resolveTelegramThumbnail(item: MediaItemEntity): Outcome<String, AppError> {
+        val gateway = telegramBackupGateway
+        val cacheDir = thumbnailCacheDir
+        val chatId = item.telegramChatId?.takeIf { it != 0L }
+        val messageId = item.telegramMessageId?.takeIf { it > 0L }
+        return when {
+            gateway == null -> Outcome.Failure(AppError.Unexpected("Telegram backup gateway is unavailable."))
+
+            cacheDir == null -> Outcome.Failure(AppError.Io("Thumbnail cache directory is not configured."))
+
+            chatId == null || messageId == null ->
+                Outcome.Failure(AppError.Io("No remote Telegram reference available for ${item.id}."))
+
+            else -> fetchLiveOrMiniThumbnail(gateway, cacheDir, item, chatId, messageId)
+        }
+    }
+
+    private suspend fun fetchLiveOrMiniThumbnail(
+        gateway: TelegramBackupGateway,
+        cacheDir: File,
+        item: MediaItemEntity,
+        chatId: Long,
+        messageId: Long
+    ): Outcome<String, AppError> {
+        val sourceOutcome = gateway.resolveThumbnailSource(
+            chatId = chatId,
+            messageId = messageId,
+            correlationToken = item.uploadCorrelationToken,
+            expectedSha256 = item.sha256
+        )
+        return when (sourceOutcome) {
+            is Outcome.Failure -> Outcome.Failure(sourceOutcome.error)
+
+            is Outcome.Success -> {
+                val source = sourceOutcome.value
+                downloadLiveTelegramThumb(gateway, cacheDir, item, source?.thumbnailFileId)
+                    ?: cacheMinithumbnail(cacheDir, item.id, source?.minithumbnailBytes)
+                    ?: Outcome.Failure(AppError.Io("No usable remote Telegram thumbnail available for ${item.id}."))
+            }
+        }
+    }
+
+    private suspend fun downloadLiveTelegramThumb(
+        gateway: TelegramBackupGateway,
+        cacheDir: File,
+        item: MediaItemEntity,
+        rawThumbId: Int?
+    ): Outcome<String, AppError>? {
+        val liveThumbId = rawThumbId?.takeIf { it > 0 } ?: return null
+        if (liveThumbId != item.telegramThumbFileId) {
+            mediaDao.updateTelegramThumbFileId(item.id, liveThumbId)
+        }
+        val destPath = File(cacheDir, "${item.id}.cloud.jpg").absolutePath
+        val downloaded = gateway.downloadThumbnail(liveThumbId, destPath)
+        return if (downloaded is Outcome.Success &&
+            mediaServices.thumbnailGenerator.isThumbnailUsable(downloaded.value)
+        ) {
+            mediaDao.updateLocalThumbPath(item.id, downloaded.value)
+            downloaded
         } else {
             null
         }
-        return resolved?.value?.also { freshId ->
-            if (freshId != item.telegramThumbFileId) {
-                mediaDao.updateTelegramThumbFileId(item.id, freshId)
-            }
+    }
+
+    private suspend fun cacheMinithumbnail(
+        cacheDir: File,
+        itemId: String,
+        rawBytes: ByteArray?
+    ): Outcome<String, AppError>? {
+        val miniBytes = rawBytes?.takeIf { it.isNotEmpty() } ?: return null
+        val miniFile = File(cacheDir, "$itemId.mini.jpg")
+        miniFile.parentFile?.mkdirs()
+        miniFile.writeBytes(miniBytes)
+        return if (mediaServices.thumbnailGenerator.isThumbnailUsable(miniFile.absolutePath)) {
+            mediaDao.updateLocalThumbPath(itemId, miniFile.absolutePath)
+            Outcome.Success(miniFile.absolutePath)
+        } else {
+            miniFile.delete()
+            null
         }
     }
 

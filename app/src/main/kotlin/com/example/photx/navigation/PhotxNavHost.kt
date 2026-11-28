@@ -20,6 +20,7 @@ import com.example.photx.feature.auth.AuthRoute
 import com.example.photx.feature.gallery.AlbumDetailRoute
 import com.example.photx.feature.gallery.AlbumsRoute
 import com.example.photx.feature.gallery.BackupRoute
+import com.example.photx.feature.gallery.DeviceFoldersRoute
 import com.example.photx.feature.gallery.GalleryAlbumId
 import com.example.photx.feature.gallery.PhotosRoute
 import com.example.photx.feature.gallery.SearchRoute
@@ -30,6 +31,7 @@ private const val ROUTE_AUTH = "auth"
 private const val ROUTE_PHOTOS = "photos"
 private const val ROUTE_ALBUMS = "albums"
 private const val ROUTE_BACKUP = "backup"
+private const val ROUTE_DEVICE_FOLDERS = "device_folders"
 private const val ROUTE_SEARCH = "search"
 private const val ARG_ALBUM_ID = "albumId"
 private const val ROUTE_ALBUM_DETAIL = "album/{$ARG_ALBUM_ID}"
@@ -113,14 +115,12 @@ private fun PhotxNavGraph(
         composable(ROUTE_BACKUP) {
             BackupRoute(
                 onOpenAuth = { navController.navigate(ROUTE_AUTH) },
-                onRetryScan = {
-                    navController.navigate(ROUTE_PHOTOS) {
-                        popUpTo(navController.graph.findStartDestination().id) { saveState = true }
-                        launchSingleTop = true
-                        restoreState = true
-                    }
-                }
+                onRetryScan = { navController.navigateToPhotos() },
+                onOpenDeviceFolders = { navController.navigate(ROUTE_DEVICE_FOLDERS) }
             )
+        }
+        composable(ROUTE_DEVICE_FOLDERS) {
+            DeviceFoldersRoute(onBack = { navController.popBackStack() })
         }
         composable(ROUTE_SEARCH) {
             SearchRoute(onOpenMedia = { mediaId -> navController.navigate(viewerRoute(mediaId)) })
@@ -131,6 +131,14 @@ private fun PhotxNavGraph(
         ) {
             MediaViewerRoute(onBack = { navController.popBackStack() })
         }
+    }
+}
+
+private fun androidx.navigation.NavHostController.navigateToPhotos() {
+    navigate(ROUTE_PHOTOS) {
+        popUpTo(graph.findStartDestination().id) { saveState = true }
+        launchSingleTop = true
+        restoreState = true
     }
 }
 

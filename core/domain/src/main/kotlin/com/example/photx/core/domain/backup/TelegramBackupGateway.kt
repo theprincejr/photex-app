@@ -116,6 +116,28 @@ public sealed interface TelegramOriginalDownloadResult {
 }
 
 /**
+ * Live Telegram thumbnail descriptors resolved via `TdApi.GetMessage`, preferring the
+ * document thumbnail file ID and falling back to the embedded JPEG minithumbnail bytes.
+ */
+public data class TelegramThumbnailSource(
+    public val thumbnailFileId: Int? = null,
+    public val minithumbnailBytes: ByteArray? = null
+) {
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is TelegramThumbnailSource) return false
+        return thumbnailFileId == other.thumbnailFileId &&
+            minithumbnailBytes.contentEquals(other.minithumbnailBytes)
+    }
+
+    override fun hashCode(): Int {
+        var result = thumbnailFileId ?: 0
+        result = 31 * result + (minithumbnailBytes?.contentHashCode() ?: 0)
+        return result
+    }
+}
+
+/**
  * Domain-facing gateway for uploading staged media documents to Saved Messages, reconciling
  * uncertain uploads, discovering cloud-only backups, and downloading thumbnails without exposing
  * TDLib types to domain or worker layers.
@@ -140,6 +162,16 @@ public interface TelegramBackupGateway {
 
     public suspend fun resolveThumbnailFileId(chatId: Long, messageId: Long): Outcome<Int?, AppError> =
         Outcome.Success(null)
+
+    public suspend fun resolveThumbnailSource(
+        chatId: Long,
+        messageId: Long,
+        correlationToken: String? = null,
+        expectedSha256: String? = null
+    ): Outcome<TelegramThumbnailSource?, AppError> = when (val idOutcome = resolveThumbnailFileId(chatId, messageId)) {
+        is Outcome.Failure -> idOutcome
+        is Outcome.Success -> Outcome.Success(idOutcome.value?.let { TelegramThumbnailSource(thumbnailFileId = it) })
+    }
 
     public suspend fun downloadVerifiedOriginalDocument(
         request: TelegramOriginalDownloadRequest,

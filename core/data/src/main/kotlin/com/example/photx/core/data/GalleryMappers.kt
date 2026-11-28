@@ -37,7 +37,8 @@ internal fun ScannedMediaItem.toLocalDiscovery(existingId: String? = null): Loca
     width = width,
     height = height,
     durationMs = durationMs,
-    takenAt = takenAt
+    takenAt = takenAt,
+    folderId = resolvedFolderId()
 )
 
 internal fun LocalTrackedSnapshot.matchesScannedMetadata(scanned: ScannedMediaItem): Boolean =
@@ -48,4 +49,5 @@ internal fun LocalTrackedSnapshot.matchesScannedMetadata(scanned: ScannedMediaIt
         width == scanned.width &&
         height == scanned.height &&
         durationMs == scanned.durationMs &&
-        takenAt == scanned.takenAt
+        takenAt == scanned.takenAt &&
+        folderId == scanned.resolvedFolderId()
