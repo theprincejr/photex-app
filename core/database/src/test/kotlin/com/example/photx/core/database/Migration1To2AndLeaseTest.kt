@@ -39,7 +39,7 @@ class Migration1To2AndLeaseTest {
             seedV1Database(context, dbFile)
 
             val migratedDb = Room.databaseBuilder(context, PhotxDatabase::class.java, dbFile.absolutePath)
-                .addMigrations(PhotxDatabaseMigrations.MIGRATION_1_2)
+                .addMigrations(PhotxDatabaseMigrations.MIGRATION_1_2, PhotxDatabaseMigrations.MIGRATION_2_3)
                 .allowMainThreadQueries()
                 .build()
             try {

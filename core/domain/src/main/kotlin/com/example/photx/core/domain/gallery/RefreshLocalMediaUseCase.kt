@@ -9,7 +9,7 @@ import com.example.photx.core.common.Outcome
  */
 public class RefreshLocalMediaUseCase(private val repository: GalleryRepository) {
     public suspend operator fun invoke(
-        scope: MediaScanScope = MediaScanScope()
+        scope: MediaScanScope = MediaScanScope.ALL
     ): Outcome<GalleryReconcileSummary, AppError> {
         val permissionState = repository.evaluatePermissionState()
         if (!permissionState.canScanDeviceMedia) {

@@ -15,8 +15,30 @@ public data class ScannedMediaItem(
     val height: Int,
     val durationMs: Long,
     val takenAt: Long,
-    val relativePath: String
-)
+    val relativePath: String,
+    val bucketId: String = "",
+    val bucketDisplayName: String = "",
+    val volumeName: String = ""
+) {
+    /**
+     * Collision-safe folder identifier combining volume name and MediaStore bucket ID,
+     * falling back to normalized relative path when bucket ID is unavailable.
+     */
+    public fun resolvedFolderId(): String = when {
+        bucketId.isNotBlank() -> "${volumeName.ifBlank { DEFAULT_VOLUME_NAME }}:$bucketId"
+        relativePath.isNotBlank() -> "rel:${relativePath.trim().trim('/').lowercase()}"
+        else -> "root:unknown"
+    }
+
+    /** Human-readable folder title preferring MediaStore `BUCKET_DISPLAY_NAME`. */
+    public fun resolvedFolderDisplayName(): String = bucketDisplayName.ifBlank {
+        relativePath.trim().trim('/').substringAfterLast('/').ifBlank { "Internal storage" }
+    }
+
+    private companion object {
+        const val DEFAULT_VOLUME_NAME = "external_primary"
+    }
+}
 
 /**
  * Result of checking whether a previously persisted local content URI is still present on device.

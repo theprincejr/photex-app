@@ -278,11 +278,24 @@ internal class AndroidTdlibGateway :
         fileId: Int,
         onProgress: (downloadedBytes: Long, totalBytes: Long) -> Unit
     ): Outcome<String, AppError> = coroutineScope {
+        val terminalDeferred = kotlinx.coroutines.CompletableDeferred<Outcome<String, AppError>>()
+        var sawActiveDownload = false
         val updateJob = launch {
             fileUpdates
                 .filter { it.fileId == fileId }
                 .collect { update ->
                     onProgress(update.downloadedBytes, update.totalBytes)
+                    if (update.isDownloadingActive) {
+                        sawActiveDownload = true
+                    }
+                    val path = update.localPath
+                    if (update.isDownloadingCompleted && !path.isNullOrBlank()) {
+                        terminalDeferred.complete(Outcome.Success(path))
+                    } else if (sawActiveDownload && !update.isDownloadingActive) {
+                        terminalDeferred.complete(
+                            Outcome.Failure(AppError.Io("TDLib download did not complete for fileId=$fileId."))
+                        )
+                    }
                 }
         }
         try {
@@ -305,15 +318,10 @@ internal class AndroidTdlibGateway :
             if (initial.isDownloadingCompleted && !initialPath.isNullOrBlank()) {
                 return@coroutineScope Outcome.Success(initialPath)
             }
-            val terminal = fileUpdates
-                .filter { it.fileId == fileId && (it.isDownloadingCompleted || !it.isDownloadingActive) }
-                .first()
-            val finalPath = terminal.localPath
-            if (terminal.isDownloadingCompleted && !finalPath.isNullOrBlank()) {
-                Outcome.Success(finalPath)
-            } else {
-                Outcome.Failure(AppError.Io("TDLib download did not complete for fileId=$fileId."))
+            if (initial.isDownloadingActive) {
+                sawActiveDownload = true
             }
+            terminalDeferred.await()
         } catch (cancelled: CancellationException) {
             cancelTelegramDownload(fileId)
             throw cancelled
@@ -376,7 +384,8 @@ internal class AndroidTdlibGateway :
                 caption = docContent.caption?.text,
                 isSendingPending = message.sendingState != null,
                 mimeType = doc.mimeType.orEmpty().ifBlank { "application/octet-stream" },
-                dateSeconds = message.date.toLong()
+                dateSeconds = message.date.toLong(),
+                minithumbnailBytes = doc.minithumbnail?.data
             )
         } else {
             null

@@ -11,7 +11,6 @@ import com.example.photx.core.common.DispatcherProvider
 import com.example.photx.core.database.BackupLeaseDao
 import com.example.photx.core.database.SyncStateDao
 import com.example.photx.core.domain.backup.BackupScheduler
-import com.example.photx.core.model.SyncState
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.withContext
 
@@ -28,7 +27,7 @@ internal class WorkManagerBackupScheduler(
     override suspend fun enqueueBackup(mediaIds: List<String>) {
         withContext(dispatcherProvider.io) {
             mediaIds.forEach { id ->
-                syncStateDao.transitionSyncState(id = id, targetState = SyncState.QUEUED)
+                syncStateDao.enqueueManualBackup(id = id)
             }
             if (syncStateDao.countQueued() > 0 || syncStateDao.findUncertainUploads().isNotEmpty()) {
                 scheduleInternal(replaceIfTail = false)

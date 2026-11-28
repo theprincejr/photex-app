@@ -111,6 +111,9 @@ public class MediaViewerViewModel @Inject constructor(
         if (!forceRetry && (current is CloudOriginalUiState.Downloading || current is CloudOriginalUiState.Ready)) {
             return
         }
+        if (forceRetry && current is CloudOriginalUiState.Ready) {
+            runCatching { java.io.File(current.cachedFilePath).delete() }
+        }
         cloudOriginalStates.update { it + (itemId to CloudOriginalUiState.Downloading()) }
         viewModelScope.launch {
             val outcome = galleryRepository.prepareCloudOriginalForViewer(itemId) { progress ->

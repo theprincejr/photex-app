@@ -28,7 +28,8 @@ public data class LocalMediaDiscovery(
     val width: Int,
     val height: Int,
     val durationMs: Long,
-    val takenAt: Long
+    val takenAt: Long,
+    val folderId: String? = null
 ) {
     init {
         require(id.isNotBlank()) { "LocalMediaDiscovery id must not be blank." }
@@ -52,7 +53,8 @@ public data class LocalMediaDiscovery(
         height = height,
         durationMs = durationMs,
         takenAt = takenAt,
-        syncState = SyncState.LOCAL_ONLY
+        syncState = SyncState.LOCAL_ONLY,
+        folderId = folderId
     )
 
     internal fun toMetadataPatch(existingId: String): LocalMediaPatch = LocalMediaPatch(
@@ -64,7 +66,8 @@ public data class LocalMediaDiscovery(
         width = width,
         height = height,
         durationMs = durationMs,
-        takenAt = takenAt
+        takenAt = takenAt,
+        folderId = folderId
     )
 }
 
@@ -90,7 +93,9 @@ public data class LocalMediaPatch internal constructor(
     @ColumnInfo(name = "duration_ms")
     val durationMs: Long,
     @ColumnInfo(name = "taken_at")
-    val takenAt: Long
+    val takenAt: Long,
+    @ColumnInfo(name = "folder_id")
+    val folderId: String? = null
 )
 
 /**

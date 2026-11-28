@@ -5,6 +5,7 @@ import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import com.example.photx.core.model.MediaType
+import com.example.photx.core.model.QueueOrigin
 import com.example.photx.core.model.SyncState
 
 /**
@@ -26,7 +27,8 @@ import com.example.photx.core.model.SyncState
             unique = true
         ),
         Index(name = "idx_media_local_uri", value = ["local_uri"], unique = true),
-        Index(name = "idx_media_correlation_token", value = ["upload_correlation_token"])
+        Index(name = "idx_media_correlation_token", value = ["upload_correlation_token"]),
+        Index(name = "idx_media_folder_id", value = ["folder_id"])
     ]
 )
 public data class MediaItemEntity(
@@ -70,7 +72,11 @@ public data class MediaItemEntity(
     @ColumnInfo(name = "upload_attempt_uncertain", defaultValue = "0")
     val uploadAttemptUncertain: Boolean = false,
     @ColumnInfo(name = "dedup_canonical_id")
-    val dedupCanonicalId: String? = null
+    val dedupCanonicalId: String? = null,
+    @ColumnInfo(name = "folder_id")
+    val folderId: String? = null,
+    @ColumnInfo(name = "queue_origin", defaultValue = "'MANUAL'")
+    val queueOrigin: QueueOrigin = QueueOrigin.MANUAL
 ) {
     init {
         require(id.isNotBlank()) { "MediaItemEntity id must not be blank." }

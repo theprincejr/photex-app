@@ -22,6 +22,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -167,8 +171,9 @@ private fun BoxScope.TileOverlays(
 
 @Composable
 private fun ThumbnailImageContent(localThumbPath: String?, contentDescription: String?) {
-    val validFile = localThumbPath?.takeIf { it.isNotBlank() }?.let(::File)
-    if (validFile != null) {
+    val validFile = localThumbPath?.takeIf { it.isNotBlank() }?.let(::File)?.takeIf { it.isFile && it.length() > 0L }
+    var decodeFailed by remember(validFile?.absolutePath, validFile?.length()) { mutableStateOf(false) }
+    if (validFile != null && !decodeFailed) {
         val context = LocalContext.current
         AsyncImage(
             model = ImageRequest.Builder(context)
@@ -177,6 +182,7 @@ private fun ThumbnailImageContent(localThumbPath: String?, contentDescription: S
                 .build(),
             contentDescription = contentDescription,
             contentScale = ContentScale.Crop,
+            onError = { decodeFailed = true },
             modifier = Modifier.fillMaxSize()
         )
     } else {

@@ -12,6 +12,7 @@ import com.example.photx.core.domain.auth.AuthRepository
 import com.example.photx.core.domain.auth.AuthState
 import com.example.photx.core.domain.backup.BackupScheduler
 import com.example.photx.core.domain.gallery.ActiveUploadRegistry
+import com.example.photx.core.domain.gallery.DeviceFolderSummary
 import com.example.photx.core.domain.gallery.GalleryMediaItem
 import com.example.photx.core.domain.gallery.GalleryRepository
 import com.example.photx.core.domain.gallery.ObserveGalleryTimelineUseCase
@@ -88,6 +89,10 @@ public class GalleryViewModel @Inject constructor(
         combine(recentItems, localState) { items, state ->
             filterSearchItems(items, state.searchQuery)
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), emptyList())
+
+    public val deviceFolders: StateFlow<List<DeviceFolderSummary>> =
+        galleryRepository.observeDeviceFolders()
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), emptyList())
 
     public val uiState: StateFlow<GalleryUiState> = combine(
         localState,
@@ -299,6 +304,31 @@ public class GalleryViewModel @Inject constructor(
                         )
                     }
                 }
+        }
+    }
+
+    public fun toggleFolderAutoBackup(folderId: String, enabled: Boolean) {
+        viewModelScope.launch {
+            when (val result = galleryRepository.setFolderAutoBackupEnabled(folderId, enabled)) {
+                is Outcome.Success -> {
+                    val feedback = if (result.value.enabled) {
+                        if (result.value.queuedCount > 0) {
+                            "Folder backup enabled (${result.value.queuedCount} item(s) queued)."
+                        } else {
+                            "Folder backup enabled. New items will be backed up automatically."
+                        }
+                    } else {
+                        "Folder backup paused (${result.value.cancelledCount} queued auto-backup item(s) stopped)."
+                    }
+                    localState.update { it.copy(backupErrorMessage = null, backupFeedbackMessage = feedback) }
+                }
+
+                is Outcome.Failure -> {
+                    localState.update {
+                        it.copy(backupFeedbackMessage = null, backupErrorMessage = result.error.message)
+                    }
+                }
+            }
         }
     }
 

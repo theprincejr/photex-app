@@ -53,14 +53,19 @@ public fun BackupRoute(
     onOpenAuth: () -> Unit,
     onRetryScan: () -> Unit,
     modifier: Modifier = Modifier,
+    onOpenDeviceFolders: () -> Unit = {},
     viewModel: GalleryViewModel = hiltViewModel()
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val folders by viewModel.deviceFolders.collectAsStateWithLifecycle()
     BackupScreen(
         uiState = uiState,
+        enabledFolderCount = folders.count { it.autoBackupEnabled },
+        totalFolderCount = folders.size,
         onOpenAuth = onOpenAuth,
         onRetryScan = onRetryScan,
         onDiscoverCloudMedia = viewModel::discoverCloudMedia,
+        onOpenDeviceFolders = onOpenDeviceFolders,
         modifier = modifier
     )
 }
@@ -71,34 +76,21 @@ public fun BackupScreen(
     onOpenAuth: () -> Unit,
     onRetryScan: () -> Unit,
     modifier: Modifier = Modifier,
-    onDiscoverCloudMedia: () -> Unit = {}
+    enabledFolderCount: Int = 0,
+    totalFolderCount: Int = 0,
+    onDiscoverCloudMedia: () -> Unit = {},
+    onOpenDeviceFolders: () -> Unit = {}
 ) {
     val colors = PhotxTheme.colorScheme
-    val syncColors = PhotxTheme.syncColors
     val spacing = PhotxTheme.spacing
     val summary = uiState.backupSummary
 
     LazyColumn(
-        modifier = modifier
-            .fillMaxSize()
-            .background(colors.background)
-            .statusBarsPadding(),
-        contentPadding = PaddingValues(
-            start = spacing.md,
-            end = spacing.md,
-            top = spacing.md,
-            bottom = spacing.dockBottomClearance
-        ),
+        modifier = modifier.fillMaxSize().background(colors.background).statusBarsPadding(),
+        contentPadding = PaddingValues(spacing.md, spacing.md, spacing.md, spacing.dockBottomClearance),
         verticalArrangement = Arrangement.spacedBy(spacing.md)
     ) {
-        item {
-            Text(
-                text = "Backup",
-                style = PhotxTheme.typography.headlineMedium,
-                color = colors.onBackground
-            )
-        }
-
+        item { Text(text = "Backup", style = PhotxTheme.typography.headlineMedium, color = colors.onBackground) }
         item {
             BackupAccountCard(
                 accountLabel = uiState.accountLabel,
@@ -107,12 +99,10 @@ public fun BackupScreen(
                 onDiscoverCloudMedia = onDiscoverCloudMedia
             )
         }
-
         val err = uiState.refreshErrorMessage ?: uiState.backupErrorMessage
         if (err != null) {
             item { PhotxErrorState(title = "Sync status warning", message = err, onRetry = onRetryScan) }
         }
-
         if (summary.totalCount == 0) {
             item {
                 PhotxEmptyState(
@@ -120,8 +110,22 @@ public fun BackupScreen(
                     message = "Index local photos first, then select items in Photos to queue a backup."
                 )
             }
+            item {
+                DeviceFoldersEntryCard(
+                    enabledFolderCount = enabledFolderCount,
+                    totalFolderCount = totalFolderCount,
+                    onOpenDeviceFolders = onOpenDeviceFolders
+                )
+            }
         } else {
             item { BackupCountsCard(summary = summary) }
+            item {
+                DeviceFoldersEntryCard(
+                    enabledFolderCount = enabledFolderCount,
+                    totalFolderCount = totalFolderCount,
+                    onOpenDeviceFolders = onOpenDeviceFolders
+                )
+            }
             item { BackupExecutionStatusCard(executionState = uiState.backupExecutionState) }
             if (!summary.hasAnyBackupActivity) {
                 item {
@@ -169,6 +173,46 @@ private fun BackupAccountCard(
             ) {
                 Text(
                     text = if (accountLabel == null) "Sign In to Telegram" else "Sync Cloud Catalogue",
+                    style = PhotxTheme.typography.labelLarge
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun DeviceFoldersEntryCard(enabledFolderCount: Int, totalFolderCount: Int, onOpenDeviceFolders: () -> Unit) {
+    val colors = PhotxTheme.colorScheme
+    val syncColors = PhotxTheme.syncColors
+    val spacing = PhotxTheme.spacing
+    Surface(shape = RoundedCornerShape(PhotxTheme.radii.banner), color = colors.surface) {
+        Column(modifier = Modifier.fillMaxWidth().padding(spacing.md)) {
+            Text(
+                text = "Device folders",
+                style = PhotxTheme.typography.titleMedium,
+                color = colors.onSurface
+            )
+            Spacer(modifier = Modifier.height(spacing.xs))
+            Text(
+                text = when {
+                    totalFolderCount == 0 -> "Choose device folders to back up automatically."
+                    enabledFolderCount == 0 -> "$totalFolderCount folder(s) discovered • Auto-backup off"
+                    else -> "$enabledFolderCount of $totalFolderCount folder(s) backing up automatically"
+                },
+                style = PhotxTheme.typography.bodyMedium,
+                color = colors.onSurfaceVariant
+            )
+            Spacer(modifier = Modifier.height(spacing.md))
+            Button(
+                onClick = onOpenDeviceFolders,
+                shape = CircleShape,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = syncColors.ctaContainer,
+                    contentColor = syncColors.onCtaContainer
+                )
+            ) {
+                Text(
+                    text = "Back up device folders",
                     style = PhotxTheme.typography.labelLarge
                 )
             }

@@ -3,6 +3,7 @@ package com.example.photx.core.database
 import androidx.room.Dao
 import androidx.room.Query
 import androidx.room.Transaction
+import com.example.photx.core.model.QueueOrigin
 import com.example.photx.core.model.SyncState
 import com.example.photx.core.model.SyncStateTransitionResult
 import com.example.photx.core.model.SyncStateTransitionValidator
@@ -238,6 +239,61 @@ public abstract class SyncStateDao {
             compareAndSwapSyncState(id = id, expectedState = current.syncState, nextState = targetState)
         }
     )
+
+    /**
+     * Enqueues [id] as a user-initiated [QueueOrigin.MANUAL] backup, promoting an already-queued
+     * `FOLDER_AUTO` item to `MANUAL` so disabling the folder will not cancel it.
+     */
+    @Transaction
+    public open suspend fun enqueueManualBackup(id: String): MediaStateMutationResult {
+        val current = getSyncSnapshot(id)
+        return when {
+            current == null -> MediaStateMutationResult.NotFound(id)
+
+            current.syncState == SyncState.QUEUED -> {
+                setQueueOrigin(id, QueueOrigin.MANUAL)
+                MediaStateMutationResult.Applied(from = SyncState.QUEUED, to = SyncState.QUEUED)
+            }
+
+            else -> {
+                val result = transitionSyncState(id = id, targetState = SyncState.QUEUED)
+                if (result is MediaStateMutationResult.Applied) {
+                    setQueueOrigin(id, QueueOrigin.MANUAL)
+                }
+                result
+            }
+        }
+    }
+
+    @Query("UPDATE media_items SET queue_origin = :origin WHERE id = :id")
+    protected abstract suspend fun setQueueOrigin(id: String, origin: QueueOrigin): Int
+
+    @Query(
+        "UPDATE media_items " +
+            "SET sync_state = 'QUEUED', queue_origin = 'FOLDER_AUTO' " +
+            "WHERE folder_id = :folderId " +
+            "AND local_uri IS NOT NULL " +
+            "AND (sync_state = 'LOCAL_ONLY' OR (sync_state = 'FAILED' AND upload_attempt_uncertain = 0))"
+    )
+    public abstract suspend fun queueEligibleFolderItems(folderId: String): Int
+
+    @Query(
+        "UPDATE media_items " +
+            "SET sync_state = 'LOCAL_ONLY', queue_origin = 'MANUAL' " +
+            "WHERE folder_id = :folderId " +
+            "AND sync_state = 'QUEUED' " +
+            "AND queue_origin = 'FOLDER_AUTO'"
+    )
+    public abstract suspend fun cancelUnstartedFolderAutoItems(folderId: String): Int
+
+    @Query(
+        "UPDATE media_items " +
+            "SET sync_state = 'LOCAL_ONLY', queue_origin = 'MANUAL' " +
+            "WHERE id = :id " +
+            "AND sync_state = 'QUEUED' " +
+            "AND queue_origin = 'FOLDER_AUTO'"
+    )
+    public abstract suspend fun revertDisabledFolderAutoItem(id: String): Int
 
     /**
      * Atomically validates the transition to [SyncState.SYNCED], enforces canonical SHA-256

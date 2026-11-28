@@ -167,3 +167,13 @@ Cumulative interview questions grounded in PhotX's **actual implemented code and
 
 ### 38. What must be preserved when enabling R8 minification on an Android app using TDLib JNI?
 > "TDLib's native `libtdjni.so` looks up `org.drinkless.tdlib.TdApi` classes, fields, and `Client.ResultHandler` callbacks by exact name via JNI reflection. R8 shrinks and obfuscates unreferenced or non-kept symbols, which breaks JNI lookups at runtime unless `proguard-rules.pro` explicitly keeps `org.drinkless.tdlib.**`, Room database/entity classes, and Hilt/WorkManager `CoroutineWorker` constructors."
+
+---
+
+## Folder-Wise Automatic Backup (`Phase 4.3`)
+
+### 39. Why does PhotX track `queue_origin` (`MANUAL` vs `FOLDER_AUTO`) alongside `sync_state`?
+> "If a user manually selects a photo and taps **Back Up**, and later turns off automatic backup for that photo's folder, disabling the folder should only stop automatic backups from that folder — not cancel the user's explicit manual selection or disrupt an in-flight upload. Tracking `queue_origin` on `media_items` lets `cancelUnstartedFolderAutoItems` revert only `QUEUED + FOLDER_AUTO` rows to `LOCAL_ONLY`, and lets `SequentialBackupEngine` re-verify `isFolderAutoBackupEnabled` right before starting a `FOLDER_AUTO` upload while still honoring `MANUAL` overrides."
+
+### 40. What caused silent grey placeholders in Photos and black screens in the cloud photo viewer, and how were they fixed?
+> "In the gallery, `PhotosScreen` only triggered `ensureCloudThumbnail` when `localThumbPath == null` and `syncState == CLOUD_ONLY`, while `PhotxPhotoThumbnailTile` passed missing/corrupt file paths to Coil without checking file existence or `onError`. In the viewer, `ZoomableAsyncImage` used bare `AsyncImage` over `Color.Black` without observing `onLoading`/`onError` or capping high-res bitmap dimensions (`4096px` / `allowHardware(false)`), and `downloadTelegramFileWithProgress` subscribed to `fileUpdates` after `sendQuery(DownloadFile)` returned. Fixing both added live `GetMessage` thumbnail + minithumbnail resolution, Coil error/loading state handling, pre-subscribed `CompletableDeferred` download tracking, and Retry recovery."

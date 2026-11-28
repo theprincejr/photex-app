@@ -119,10 +119,13 @@ internal class AndroidMediaStoreScanner(
         )
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             columns += MediaStore.MediaColumns.RELATIVE_PATH
+            columns += MediaStore.MediaColumns.VOLUME_NAME
         } else {
             @Suppress("DEPRECATION")
             columns += MediaStore.MediaColumns.DATA
         }
+        columns += MediaStore.MediaColumns.BUCKET_ID
+        columns += MediaStore.MediaColumns.BUCKET_DISPLAY_NAME
         if (mediaType == MediaType.VIDEO) {
             columns += MediaStore.Video.VideoColumns.DURATION
         }
@@ -150,7 +153,10 @@ internal class AndroidMediaStoreScanner(
             height = readNonNegativeInt(cursor, cols.heightIdx),
             durationMs = if (mediaType == MediaType.VIDEO) readNonNegativeLong(cursor, cols.durationIdx) else 0L,
             takenAt = extractTimestampMillis(cursor, cols),
-            relativePath = normalizeRelativePath(rawRelativePath)
+            relativePath = normalizeRelativePath(rawRelativePath),
+            bucketId = readNonBlankString(cursor, cols.bucketIdIdx).orEmpty(),
+            bucketDisplayName = readNonBlankString(cursor, cols.bucketDisplayNameIdx).orEmpty(),
+            volumeName = readNonBlankString(cursor, cols.volumeNameIdx).orEmpty()
         )
     }
 
@@ -196,6 +202,13 @@ internal class AndroidMediaStoreScanner(
         } else {
             -1
         }
+        val volumeNameIdx: Int = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            cursor.getColumnIndex(MediaStore.MediaColumns.VOLUME_NAME)
+        } else {
+            -1
+        }
+        val bucketIdIdx: Int = cursor.getColumnIndex(MediaStore.MediaColumns.BUCKET_ID)
+        val bucketDisplayNameIdx: Int = cursor.getColumnIndex(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
 
         @Suppress("DEPRECATION")
         val dataIdx: Int = cursor.getColumnIndex(MediaStore.MediaColumns.DATA)
@@ -243,12 +256,17 @@ internal fun extractParentFromLegacyDataPath(dataPath: String): String {
 
 internal fun matchesRelativePathScope(relativePath: String, scope: MediaScanScope): Boolean {
     val normalizedPath = normalizeRelativePath(relativePath)
-    if (normalizedPath.isEmpty()) return false
-    return scope.relativePathPrefixes.any { prefix ->
-        val cleanPrefix = normalizeRelativePath(prefix)
-        normalizedPath.equals(cleanPrefix, ignoreCase = true) ||
-            normalizedPath.startsWith("$cleanPrefix/", ignoreCase = true) ||
-            normalizedPath.contains("/$cleanPrefix/", ignoreCase = true) ||
-            normalizedPath.endsWith("/$cleanPrefix", ignoreCase = true)
+    return when {
+        normalizedPath.isEmpty() -> false
+
+        scope.relativePathPrefixes.isEmpty() -> true
+
+        else -> scope.relativePathPrefixes.any { prefix ->
+            val cleanPrefix = normalizeRelativePath(prefix)
+            normalizedPath.equals(cleanPrefix, ignoreCase = true) ||
+                normalizedPath.startsWith("$cleanPrefix/", ignoreCase = true) ||
+                normalizedPath.contains("/$cleanPrefix/", ignoreCase = true) ||
+                normalizedPath.endsWith("/$cleanPrefix", ignoreCase = true)
+        }
     }
 }

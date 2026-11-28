@@ -228,3 +228,15 @@ Every technical term is explained in three parts: **Simple Meaning**, **Technica
 - **Simple meaning:** Shrinking and optimizing the app's Kotlin/Java bytecode for release while telling the optimizer not to rename or strip C++ TDLib bridge classes.
 - **Technical definition:** Enabling `isMinifyEnabled = true` and `isShrinkResources = true` in `release` with `-keep class org.drinkless.tdlib.** { *; }` so JNI native callbacks (`Client.ResultHandler`, `TdApi.*`) retain exact names and signatures.
 - **Use in PhotX:** Configured in `app/build.gradle.kts` and `app/proguard-rules.pro` for `v0.1.0-beta.1`.
+
+### `QueueOrigin` (`MANUAL` vs `FOLDER_AUTO`)
+- **Definition:** Enum stored on `media_items.queue_origin` distinguishing items explicitly queued by the user (`MANUAL`) from items queued by folder-wise automatic backup (`FOLDER_AUTO`).
+- **Use in PhotX:** Disabling automatic backup for a folder only cancels unstarted `QUEUED` items with `queue_origin = 'FOLDER_AUTO'`, leaving `MANUAL` selections, active `UPLOADING` items, `SYNCED`, and `CLOUD_ONLY` records untouched.
+
+### Collision-Safe Folder ID (`<volumeName>:<bucketId>`)
+- **Definition:** Stable folder identifier combining Android MediaStore `VOLUME_NAME` and `BUCKET_ID` (falling back to normalized `RELATIVE_PATH`).
+- **Use in PhotX:** Prevents folders with identical display names (e.g., `Camera` on internal storage vs `Pictures/Camera`) from colliding in `folder_backup_preferences`.
+
+### `TelegramThumbnailSource` (`thumbnailFileId` + `minithumbnailBytes`)
+- **Definition:** Live thumbnail descriptor resolved from `TdApi.GetMessage` after validating `#photx v1` ownership and correlation metadata.
+- **Use in PhotX:** Prevents reliance on stale persisted `telegram_thumb_file_id` values and provides an embedded JPEG minithumbnail fallback when a document has no separate `InputThumbnail` file.

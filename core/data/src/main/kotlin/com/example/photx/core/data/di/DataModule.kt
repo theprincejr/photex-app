@@ -9,6 +9,7 @@ import com.example.photx.core.data.RoomGalleryPagingRepository
 import com.example.photx.core.data.backup.WorkManagerActiveUploadRegistry
 import com.example.photx.core.data.backup.WorkManagerBackupScheduler
 import com.example.photx.core.database.BackupLeaseDao
+import com.example.photx.core.database.FolderBackupDao
 import com.example.photx.core.database.MediaDao
 import com.example.photx.core.database.SyncStateDao
 import com.example.photx.core.database.di.PhotxMediaDaos
@@ -74,6 +75,8 @@ public object DataModule {
         activeUploadRegistry: ActiveUploadRegistry,
         telegramBackupGateway: TelegramBackupGateway,
         mediaStoreRestorer: MediaStoreRestorer,
+        folderBackupDao: FolderBackupDao,
+        backupScheduler: BackupScheduler,
         dispatcherProvider: DispatcherProvider
     ): GalleryRepository = DefaultGalleryRepository(
         daos = daos,
@@ -83,7 +86,9 @@ public object DataModule {
         telegramBackupGateway = telegramBackupGateway,
         thumbnailCacheDir = File(context.filesDir, "thumbnails"),
         restoreCacheDir = File(context.cacheDir, "viewer_originals"),
-        mediaStoreRestorer = mediaStoreRestorer
+        mediaStoreRestorer = mediaStoreRestorer,
+        folderBackupDao = folderBackupDao,
+        backupScheduler = backupScheduler
     )
 
     @Provides

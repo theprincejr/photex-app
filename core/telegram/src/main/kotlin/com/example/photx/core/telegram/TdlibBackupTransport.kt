@@ -39,7 +39,8 @@ internal data class TdlibCandidateDocument(
     val caption: String?,
     val isSendingPending: Boolean,
     val mimeType: String = "application/octet-stream",
-    val dateSeconds: Long = 0L
+    val dateSeconds: Long = 0L,
+    val minithumbnailBytes: ByteArray? = null
 )
 
 /**

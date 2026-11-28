@@ -59,6 +59,8 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
+import coil3.request.allowHardware
+import coil3.size.Precision
 import com.example.photx.core.designsystem.PhotxTheme
 import com.example.photx.core.domain.gallery.GalleryMediaItem
 import com.example.photx.core.model.MediaType
@@ -75,6 +77,7 @@ import java.util.Locale
 private const val MIN_ZOOM_SCALE = 1f
 private const val DOUBLE_TAP_ZOOM_SCALE = 2.5f
 private const val MAX_ZOOM_SCALE = 4f
+private const val MAX_VIEWER_BITMAP_DIMENSION = 4096
 private const val PREVIEW_DIM_ALPHA = 0.25f
 private const val SHA256_PREVIEW_CHARS = 16
 private const val BYTES_PER_KB = 1024.0
@@ -246,12 +249,11 @@ private fun ZoomableImagePage(
         scale = updatedScale
         offset = if (updatedScale > MIN_ZOOM_SCALE) offset + panChange else Offset.Zero
     }
-    val localUriModel = item.localUri?.let(Uri::parse)
-    val verifiedOriginalModel: Any? = when {
-        localUriModel != null -> localUriModel
-        item.syncState != SyncState.CLOUD_ONLY -> item.localThumbPath?.let(::File)
-        cloudOriginalState is CloudOriginalUiState.Ready -> File(cloudOriginalState.cachedFilePath)
-        else -> null
+    val verifiedOriginalModel = resolveVerifiedViewerModel(item, cloudOriginalState)
+    var decodeState by remember(item.id, verifiedOriginalModel) {
+        mutableStateOf<ImageDecodeState>(
+            if (verifiedOriginalModel != null) ImageDecodeState.Loading else ImageDecodeState.Idle
+        )
     }
 
     Box(
@@ -261,13 +263,9 @@ private fun ZoomableImagePage(
                 detectTapGestures(
                     onTap = { onTap() },
                     onDoubleTap = {
-                        if (verifiedOriginalModel != null) {
-                            if (scale > MIN_ZOOM_SCALE) {
-                                scale = MIN_ZOOM_SCALE
-                                offset = Offset.Zero
-                            } else {
-                                scale = DOUBLE_TAP_ZOOM_SCALE
-                            }
+                        if (verifiedOriginalModel != null && decodeState is ImageDecodeState.Success) {
+                            scale = if (scale > MIN_ZOOM_SCALE) MIN_ZOOM_SCALE else DOUBLE_TAP_ZOOM_SCALE
+                            if (scale == MIN_ZOOM_SCALE) offset = Offset.Zero
                         }
                     }
                 )
@@ -275,20 +273,108 @@ private fun ZoomableImagePage(
             .transformable(state = transformState, canPan = { scale > MIN_ZOOM_SCALE }),
         contentAlignment = Alignment.Center
     ) {
-        if (verifiedOriginalModel != null) {
-            ZoomableAsyncImage(verifiedOriginalModel, item.fileName, scale, offset)
-        } else {
-            CloudPreviewPlaceholder(item.localThumbPath, cloudOriginalState, onRetry)
-        }
+        ZoomableImageContent(
+            item = item,
+            verifiedOriginalModel = verifiedOriginalModel,
+            cloudOriginalState = cloudOriginalState,
+            decodeState = decodeState,
+            scale = scale,
+            offset = offset,
+            onDecodeStateChange = { decodeState = it },
+            onRetry = onRetry
+        )
+    }
+}
+
+private fun resolveVerifiedViewerModel(item: GalleryMediaItem, cloudOriginalState: CloudOriginalUiState): Any? {
+    val localUriModel = item.localUri?.let(Uri::parse)
+    return when {
+        localUriModel != null -> localUriModel
+
+        item.syncState != SyncState.CLOUD_ONLY ->
+            item.localThumbPath?.let(::File)?.takeIf { it.isFile && it.length() > 0L }
+
+        cloudOriginalState is CloudOriginalUiState.Ready ->
+            File(cloudOriginalState.cachedFilePath).takeIf { it.isFile && it.length() > 0L }
+
+        else -> null
     }
 }
 
 @Composable
-private fun ZoomableAsyncImage(model: Any, contentDescription: String, scale: Float, offset: Offset) {
+private fun ZoomableImageContent(
+    item: GalleryMediaItem,
+    verifiedOriginalModel: Any?,
+    cloudOriginalState: CloudOriginalUiState,
+    decodeState: ImageDecodeState,
+    scale: Float,
+    offset: Offset,
+    onDecodeStateChange: (ImageDecodeState) -> Unit,
+    onRetry: () -> Unit
+) {
+    if (verifiedOriginalModel == null) {
+        val effectiveState = if (cloudOriginalState is CloudOriginalUiState.Ready) {
+            CloudOriginalUiState.Failed("Cached original file is unavailable.", isIntegrityError = false)
+        } else {
+            cloudOriginalState
+        }
+        CloudPreviewPlaceholder(item.localThumbPath, effectiveState, onRetry)
+        return
+    }
+    ZoomableAsyncImage(
+        model = verifiedOriginalModel,
+        contentDescription = item.fileName,
+        scale = scale,
+        offset = offset,
+        onLoading = { onDecodeStateChange(ImageDecodeState.Loading) },
+        onSuccess = { onDecodeStateChange(ImageDecodeState.Success) },
+        onError = { msg -> onDecodeStateChange(ImageDecodeState.Failed(msg)) }
+    )
+    when (decodeState) {
+        is ImageDecodeState.Loading -> CloudPreviewPlaceholder(
+            localThumbPath = item.localThumbPath,
+            cloudOriginalState = CloudOriginalUiState.Downloading(),
+            onRetry = onRetry
+        )
+
+        is ImageDecodeState.Failed -> DecodeErrorOverlay(message = decodeState.message, onRetry = onRetry)
+
+        ImageDecodeState.Idle,
+        ImageDecodeState.Success -> Unit
+    }
+}
+
+private sealed interface ImageDecodeState {
+    data object Idle : ImageDecodeState
+    data object Loading : ImageDecodeState
+    data object Success : ImageDecodeState
+    data class Failed(val message: String) : ImageDecodeState
+}
+
+@Composable
+private fun ZoomableAsyncImage(
+    model: Any,
+    contentDescription: String,
+    scale: Float,
+    offset: Offset,
+    onLoading: () -> Unit,
+    onSuccess: () -> Unit,
+    onError: (String) -> Unit
+) {
     AsyncImage(
-        model = ImageRequest.Builder(LocalContext.current).data(model).build(),
+        model = ImageRequest.Builder(LocalContext.current)
+            .data(model)
+            .size(MAX_VIEWER_BITMAP_DIMENSION)
+            .precision(Precision.INEXACT)
+            .allowHardware(false)
+            .build(),
         contentDescription = contentDescription,
         contentScale = ContentScale.Fit,
+        onLoading = { onLoading() },
+        onSuccess = { onSuccess() },
+        onError = { result ->
+            onError(result.result.throwable.message ?: "Unable to decode image.")
+        },
         modifier = Modifier
             .fillMaxSize()
             .graphicsLayer(
@@ -298,6 +384,29 @@ private fun ZoomableAsyncImage(model: Any, contentDescription: String, scale: Fl
                 translationY = offset.y
             )
     )
+}
+
+@Composable
+private fun DecodeErrorOverlay(message: String, onRetry: () -> Unit) {
+    val spacing = PhotxTheme.spacing
+    val glass = PhotxTheme.glass
+    Surface(
+        shape = PhotxTheme.shapes.large,
+        color = glass.scrimContainer,
+        modifier = Modifier.padding(spacing.lg)
+    ) {
+        Column(
+            modifier = Modifier.padding(spacing.lg),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(spacing.sm)
+        ) {
+            Text(text = "Image decoding failed", style = PhotxTheme.typography.titleSmall, color = glass.onScrim)
+            Text(text = message, style = PhotxTheme.typography.bodySmall, color = glass.onScrim)
+            Button(onClick = onRetry, shape = CircleShape) {
+                Text(text = "Retry")
+            }
+        }
+    }
 }
 
 @Composable
